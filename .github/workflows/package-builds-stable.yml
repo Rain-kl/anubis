@@ -2,52 +2,168 @@ name: Package builds (stable)
 
 on:
   workflow_dispatch:
-  # release:
-  #   types: [published]
 
 permissions:
   contents: write
   actions: write
 
+env:
+  GO_VERSION: "1.25.4"
+  NODE_VERSION: "24.11.0"
+
 jobs:
-  package_builds:
-    #runs-on: alrest-techarohq
-    runs-on: ubuntu-24.04
+  # ──────────────────────────────────────────────
+  # Job 1: Build shared front-end assets (platform-independent)
+  # ──────────────────────────────────────────────
+  build-assets:
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@v4
         with:
           persist-credentials: false
           fetch-tags: true
           fetch-depth: 0
 
-      - name: build essential
+      - name: Install system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential
+          sudo apt-get install -y build-essential brotli zstd
 
-      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+      - uses: actions/setup-node@v4
         with:
-          node-version: '24.11.0'
-      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+          node-version: ${{ env.NODE_VERSION }}
+
+      - uses: actions/setup-go@v5
         with:
-          go-version: '1.25.4'
+          go-version: ${{ env.GO_VERSION }}
 
-      - name: install node deps
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Generate & build front-end assets
         run: |
-          npm ci
+          go mod download
+          go generate ./...
+          ./web/build.sh
+          ./xess/build.sh
 
-      - name: Build Packages
-        run: |
-          go tool yeet
+      - name: Upload assets artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: shared-assets
+          path: |
+            web/static/
+            xess/xess.min.css
+            lib/
+          retention-days: 1
 
-      - name: Upload released artifacts
+  # ──────────────────────────────────────────────
+  # Job 2: Cross-compile Go binaries
+  # ──────────────────────────────────────────────
+  build-binary:
+    needs: build-assets
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-tags: true
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Download shared assets
+        uses: actions/download-artifact@v4
+        with:
+          name: shared-assets
+          path: .
+
+      - name: Build binary
         env:
-          GITHUB_TOKEN: ${{ github.TOKEN }}
-          RELEASE_VERSION: ${{github.event.release.tag_name}}
-        shell: bash
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
         run: |
-          RELEASE="${RELEASE_VERSION}"
-          cd var
-          for file in *; do
-            gh release upload $RELEASE $file
-          done
+          go mod download
+
+          VERSION="build-$(date -u +'%Y%m%d-%H%M%S')"
+
+          EXT=""
+          if [ "$GOOS" = "windows" ]; then
+            EXT=".exe"
+          fi
+
+          OUTPUT_NAME="anubis-${GOOS}-${GOARCH}${EXT}"
+
+          go build -trimpath \
+            -ldflags="-s -w -X 'github.com/TecharoHQ/anubis.Version=${VERSION}'" \
+            -o "${OUTPUT_NAME}" \
+            ./cmd/anubis
+
+          echo "OUTPUT_NAME=${OUTPUT_NAME}" >> "$GITHUB_ENV"
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: anubis-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: ${{ env.OUTPUT_NAME }}
+          retention-days: 1
+
+  # ──────────────────────────────────────────────
+  # Job 3: Create release and upload all binaries
+  # ──────────────────────────────────────────────
+  release:
+    needs: build-binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download all binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: anubis-*
+          path: dist/
+          merge-multiple: true
+
+      - name: Create release tag
+        id: tag
+        run: |
+          TAG="build-$(date -u +'%Y%m%d-%H%M%S')"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Release tag: ${TAG}"
+
+      - name: Create GitHub release and upload assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+
+          # Create the tag on the current commit
+          git tag "${TAG}"
+          git push origin "${TAG}"
+
+          # Create the release and upload all binaries
+          gh release create "${TAG}" \
+            --title "Build ${TAG}" \
+            --notes "Automated build at $(date -u +'%Y-%m-%d %H:%M:%S UTC')" \
+            dist/*

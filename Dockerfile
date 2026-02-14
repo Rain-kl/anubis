@@ -23,11 +23,12 @@ RUN go generate ./...
 RUN ./web/build.sh
 RUN ./xess/build.sh
 
-ARG TARGETOS=linux
-ARG TARGETARCH=amd64
+ARG TARGETOS
+ARG TARGETARCH
 ARG VERSION=devel
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags="-s -w -X 'github.com/TecharoHQ/anubis.Version=${VERSION}'" -o /out/anubis ./cmd/anubis
+
 
 FROM alpine:3.20
 

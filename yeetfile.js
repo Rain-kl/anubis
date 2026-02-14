@@ -1,3 +1,27 @@
+const fs = require("fs");
+const path = require("path");
+
+const versionFromFile = (() => {
+    try {
+        const raw = fs.readFileSync(path.join(process.cwd(), "VERSION"), "utf8").trim();
+        if (raw) return raw;
+    } catch {}
+    try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8"));
+        if (pkg && typeof pkg.version === "string" && pkg.version.trim()) {
+            return pkg.version.trim();
+        }
+    } catch {}
+    return "";
+})();
+
+const version = (() => {
+    const tag = git.tag();
+    if (tag && tag !== "devel") return tag;
+    if (versionFromFile) return versionFromFile;
+    return tag || "devel";
+})();
+
 $`npm run assets`;
 
 [
@@ -20,8 +44,8 @@ $`npm run assets`;
         },
 
         build: ({ bin, etc, systemd, doc }) => {
-            $`go build -o ${bin}/anubis -ldflags '-s -w -extldflags "-static" -X "github.com/TecharoHQ/anubis.Version=${git.tag()}"' ./cmd/anubis`;
-            $`go build -o ${bin}/anubis-robots2policy -ldflags '-s -w -extldflags "-static" -X "github.com/TecharoHQ/anubis.Version=${git.tag()}"' ./cmd/robots2policy`;
+            $`go build -o ${bin}/anubis -ldflags '-s -w -extldflags "-static" -X "github.com/TecharoHQ/anubis.Version=${version}"' ./cmd/anubis`;
+            $`go build -o ${bin}/anubis-robots2policy -ldflags '-s -w -extldflags "-static" -X "github.com/TecharoHQ/anubis.Version=${version}"' ./cmd/robots2policy`;
 
             file.install("./run/anubis@.service", `${systemd}/anubis@.service`);
             file.install("./run/default.env", `${etc}/default.env`);
@@ -58,7 +82,7 @@ tarball.build({
         // vendor Go dependencies
         $`cd ${out} && go mod vendor`;
         // write VERSION file
-        $`echo ${git.tag()} > ${out}/VERSION`;
+        $`echo ${version} > ${out}/VERSION`;
     },
 
     mkFilename: ({ name, version }) => `${name}-${version}`,
@@ -79,7 +103,7 @@ tarball.build({
         // build NPM-bound dependencies
         $`cd ${out} && npm ci && npm run assets && rm -rf node_modules`
         // write VERSION file
-        $`echo ${git.tag()} > ${out}/VERSION`;
+        $`echo ${version} > ${out}/VERSION`;
     },
 
     mkFilename: ({ name, version }) => `${name}-${version}`,

@@ -4,6 +4,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+ESBUILD_CMD=(npx --no-install esbuild)
+
 LICENSE='/*
 @licstart  The following is the entire license notice for the
 JavaScript code in this page.
@@ -49,7 +51,7 @@ for file in js/**/*.ts js/**/*.mjs; do
 
   mkdir -p "$(dirname "$out")"
 
-  esbuild "$file" --sourcemap --bundle --minify --outfile="$out" --banner:js="$LICENSE"
+  "${ESBUILD_CMD[@]}" "$file" --sourcemap --bundle --minify --outfile="$out" --banner:js="$LICENSE"
   gzip -f -k -n "$out"
   zstd -f -k --ultra -22 "$out"
   brotli -fZk "$out"

@@ -1,9 +1,6 @@
 services:
   anubis:
-    build:
-      context: .
-      args:
-        VERSION: ${VERSION:-devel}
+    image: ghcr.io/rain-kl/anubis:latest
     ports:
       - "8923:8923"
 #      - "9090:9090"
