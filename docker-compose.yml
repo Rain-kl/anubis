@@ -1,0 +1,18 @@
+services:
+  anubis:
+    build:
+      context: .
+      args:
+        VERSION: ${VERSION:-devel}
+    ports:
+      - "8923:8923"
+#      - "9090:9090"
+    command: ["-use-remote-address"]
+    environment:
+      TARGET: "http://host.docker.internal:3923"
+      AUTH_MODE: "pow"
+      VALID_MODE: "jwt"
+      PASSWORD: "change-me"
+      PASSWORD_MAX_FAILS: "10"
+      PASSWORD_BAN_TIME: "900"
+      WHITELIST_TIMEOUT: "3600"
