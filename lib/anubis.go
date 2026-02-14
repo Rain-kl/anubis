@@ -223,25 +223,53 @@ func (s *Server) maybeReverseProxy(w http.ResponseWriter, r *http.Request, httpS
 		return
 	}
 
+	if s.opts.AuthHooks != nil {
+		decision, err := s.opts.AuthHooks.ValidateRequest(r, cr, rule)
+		if err != nil {
+			lg.Error("custom validation failed", "err", err)
+			localizer := localization.GetLocalizer(r)
+			s.respondWithError(w, r, fmt.Sprintf("%s \"maybeReverseProxy.customValidation\"", localizer.T("internal_server_error")), makeCode(err))
+			return
+		}
+
+		switch decision {
+		case ValidationAllow:
+			r.Header.Add("X-Anubis-Status", "PASS")
+			s.ServeHTTPNext(w, r)
+			return
+		case ValidationDeny:
+			s.ClearCookie(w, CookieOpts{Path: cookiePath, Host: r.Host})
+			s.renderAuthPage(w, r, cr, rule, httpStatusOnly)
+			return
+		case ValidationSkip:
+			// continue with built-in JWT validation
+		default:
+			lg.Error("unknown validation decision", "decision", decision)
+			localizer := localization.GetLocalizer(r)
+			s.respondWithError(w, r, fmt.Sprintf("%s \"maybeReverseProxy.customValidation\"", localizer.T("internal_server_error")), makeCode(ErrActualAnubisBug))
+			return
+		}
+	}
+
 	ckie, err := r.Cookie(anubis.CookieName)
 	if err != nil {
 		lg.Debug("cookie not found", "path", r.URL.Path)
 		s.ClearCookie(w, CookieOpts{Path: cookiePath, Host: r.Host})
-		s.RenderIndex(w, r, cr, rule, httpStatusOnly)
+		s.renderAuthPage(w, r, cr, rule, httpStatusOnly)
 		return
 	}
 
 	if err := ckie.Valid(); err != nil {
 		lg.Debug("cookie is invalid", "err", err)
 		s.ClearCookie(w, CookieOpts{Path: cookiePath, Host: r.Host})
-		s.RenderIndex(w, r, cr, rule, httpStatusOnly)
+		s.renderAuthPage(w, r, cr, rule, httpStatusOnly)
 		return
 	}
 
 	if time.Now().After(ckie.Expires) && !ckie.Expires.IsZero() {
 		lg.Debug("cookie expired", "path", r.URL.Path)
 		s.ClearCookie(w, CookieOpts{Path: cookiePath, Host: r.Host})
-		s.RenderIndex(w, r, cr, rule, httpStatusOnly)
+		s.renderAuthPage(w, r, cr, rule, httpStatusOnly)
 		return
 	}
 
@@ -250,7 +278,7 @@ func (s *Server) maybeReverseProxy(w http.ResponseWriter, r *http.Request, httpS
 	if err != nil || !token.Valid {
 		lg.Debug("invalid token", "path", r.URL.Path, "err", err)
 		s.ClearCookie(w, CookieOpts{Path: cookiePath, Host: r.Host})
-		s.RenderIndex(w, r, cr, rule, httpStatusOnly)
+		s.renderAuthPage(w, r, cr, rule, httpStatusOnly)
 		return
 	}
 
@@ -258,7 +286,7 @@ func (s *Server) maybeReverseProxy(w http.ResponseWriter, r *http.Request, httpS
 	if !ok {
 		lg.Debug("invalid token claims type", "path", r.URL.Path)
 		s.ClearCookie(w, CookieOpts{Path: cookiePath, Host: r.Host})
-		s.RenderIndex(w, r, cr, rule, httpStatusOnly)
+		s.renderAuthPage(w, r, cr, rule, httpStatusOnly)
 		return
 	}
 
@@ -266,21 +294,21 @@ func (s *Server) maybeReverseProxy(w http.ResponseWriter, r *http.Request, httpS
 	if !ok {
 		lg.Debug("policyRule claim is not a string")
 		s.ClearCookie(w, CookieOpts{Path: cookiePath, Host: r.Host})
-		s.RenderIndex(w, r, cr, rule, httpStatusOnly)
+		s.renderAuthPage(w, r, cr, rule, httpStatusOnly)
 		return
 	}
 
 	if policyRule != rule.Hash() {
 		lg.Debug("user originally passed with a different rule, issuing new challenge", "old", policyRule, "new", rule.Name)
 		s.ClearCookie(w, CookieOpts{Path: cookiePath, Host: r.Host})
-		s.RenderIndex(w, r, cr, rule, httpStatusOnly)
+		s.renderAuthPage(w, r, cr, rule, httpStatusOnly)
 		return
 	}
 
 	if s.opts.JWTRestrictionHeader != "" && claims["restriction"] != internal.SHA256sum(r.Header.Get(s.opts.JWTRestrictionHeader)) {
 		lg.Debug("JWT restriction header is invalid")
 		s.ClearCookie(w, CookieOpts{Path: cookiePath, Host: r.Host})
-		s.RenderIndex(w, r, cr, rule, httpStatusOnly)
+		s.renderAuthPage(w, r, cr, rule, httpStatusOnly)
 		return
 	}
 
@@ -539,39 +567,52 @@ func (s *Server) PassChallenge(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// generate JWT cookie
-	var tokenString string
-
-	// check if JWTRestrictionHeader is set and header is in request
-	claims := jwt.MapClaims{
-		"challenge":  chall.ID,
-		"method":     rule.Challenge.Algorithm,
-		"policyRule": rule.Hash(),
-		"action":     string(cr.Rule),
-	}
-	if s.opts.JWTRestrictionHeader != "" {
-		if r.Header.Get(s.opts.JWTRestrictionHeader) == "" {
-			lg.Error("JWTRestrictionHeader is set in config but not found in request, please check your reverse proxy config.")
+	handled := false
+	if s.opts.AuthHooks != nil {
+		handled, err = s.opts.AuthHooks.HandleAuthSuccess(w, r, cr, rule)
+		if err != nil {
+			lg.Error("auth success handler failed", "err", err)
 			s.ClearCookie(w, CookieOpts{Path: cookiePath, Host: r.Host})
-			s.respondWithError(w, r, "failed to sign JWT", makeCode(err))
+			s.respondWithError(w, r, fmt.Sprintf("%s \"passChallenge\"", localizer.T("internal_server_error")), makeCode(err))
 			return
-		} else {
-			claims["restriction"] = internal.SHA256sum(r.Header.Get(s.opts.JWTRestrictionHeader))
 		}
 	}
-	if s.opts.DifficultyInJWT {
-		claims["difficulty"] = rule.Challenge.Difficulty
-	}
-	tokenString, err = s.signJWT(claims)
 
-	if err != nil {
-		lg.Error("failed to sign JWT", "err", err)
-		s.ClearCookie(w, CookieOpts{Path: cookiePath, Host: r.Host})
-		s.respondWithError(w, r, localizer.T("failed_to_sign_jwt"), makeCode(err))
-		return
-	}
+	if !handled {
+		// generate JWT cookie
+		var tokenString string
 
-	s.SetCookie(w, CookieOpts{Path: cookiePath, Host: r.Host, Value: tokenString})
+		// check if JWTRestrictionHeader is set and header is in request
+		claims := jwt.MapClaims{
+			"challenge":  chall.ID,
+			"method":     rule.Challenge.Algorithm,
+			"policyRule": rule.Hash(),
+			"action":     string(cr.Rule),
+		}
+		if s.opts.JWTRestrictionHeader != "" {
+			if r.Header.Get(s.opts.JWTRestrictionHeader) == "" {
+				lg.Error("JWTRestrictionHeader is set in config but not found in request, please check your reverse proxy config.")
+				s.ClearCookie(w, CookieOpts{Path: cookiePath, Host: r.Host})
+				s.respondWithError(w, r, "failed to sign JWT", makeCode(err))
+				return
+			} else {
+				claims["restriction"] = internal.SHA256sum(r.Header.Get(s.opts.JWTRestrictionHeader))
+			}
+		}
+		if s.opts.DifficultyInJWT {
+			claims["difficulty"] = rule.Challenge.Difficulty
+		}
+		tokenString, err = s.signJWT(claims)
+
+		if err != nil {
+			lg.Error("failed to sign JWT", "err", err)
+			s.ClearCookie(w, CookieOpts{Path: cookiePath, Host: r.Host})
+			s.respondWithError(w, r, localizer.T("failed_to_sign_jwt"), makeCode(err))
+			return
+		}
+
+		s.SetCookie(w, CookieOpts{Path: cookiePath, Host: r.Host, Value: tokenString})
+	}
 
 	chall.Spent = true
 	j := store.JSON[challenge.Challenge]{Underlying: s.store}

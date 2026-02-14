@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/TecharoHQ/anubis"
+	"github.com/TecharoHQ/anubis/cust"
 	"github.com/TecharoHQ/anubis/data"
 	"github.com/TecharoHQ/anubis/internal"
 	libanubis "github.com/TecharoHQ/anubis/lib"
@@ -52,6 +53,12 @@ var (
 	cookiePrefix             = flag.String("cookie-prefix", anubis.CookieName, "prefix for browser cookies created by Anubis")
 	cookiePartitioned        = flag.Bool("cookie-partitioned", false, "if true, sets the partitioned flag on Anubis cookies, enabling CHIPS support")
 	difficultyInJWT          = flag.Bool("difficulty-in-jwt", false, "if true, adds a difficulty field in the JWT claims")
+	authMode                 = flag.String("auth-mode", "password", "authentication mode: pow or password")
+	validMode                = flag.String("valid-mode", "jwt", "validation mode: jwt or whitelist")
+	passwordAuth             = flag.String("password", "123", "password used for password auth mode")
+	passwordMaxFails         = flag.Int("password-max-fails", 5, "max failed password attempts before temporary block")
+	passwordBanTime          = flag.Int("password-ban-time", 900, "password block duration in seconds")
+	whitelistTimeout         = flag.Int("whitelist-timeout", 3600, "whitelist timeout in seconds")
 	useSimplifiedExplanation = flag.Bool("use-simplified-explanation", false, "if true, replaces the text when clicking \"Why am I seeing this?\" with a more simplified text for a non-tech-savvy audience.")
 	forcedLanguage           = flag.String("forced-language", "", "if set, this language is being used instead of the one from the request's Accept-Language header")
 	hs512Secret              = flag.String("hs512-secret", "", "secret used to sign JWTs, uses ed25519 if not set")
@@ -430,6 +437,28 @@ func main() {
 		lg.Warn("REDIRECT_DOMAINS is not set, Anubis will only redirect to the same domain a request is coming from, see https://anubis.techaro.lol/docs/admin/configuration/redirect-domains")
 	}
 
+	custCfg := cust.Config{
+		AuthMode:             *authMode,
+		ValidMode:            *validMode,
+		Password:             *passwordAuth,
+		WhitelistTTL:         time.Duration(*whitelistTimeout) * time.Second,
+		WhitelistSliding:     true,
+		PasswordMaxFails:     *passwordMaxFails,
+		PasswordBanDuration:  time.Duration(*passwordBanTime) * time.Second,
+		PublicUrl:            *publicUrl,
+		RedirectDomains:      redirectDomainsList,
+		CookieExpiration:     *cookieExpiration,
+		JWTRestrictionHeader: *jwtRestrictionHeader,
+		DifficultyInJWT:      *difficultyInJWT,
+		HS512Secret:          []byte(*hs512Secret),
+		ED25519PrivateKey:    ed25519Priv,
+	}
+
+	authHooks, err := cust.NewHooks(custCfg, policy.Store, policy.Logger.With("subsystem", "cust"))
+	if err != nil {
+		log.Fatalf("invalid auth configuration: %v", err)
+	}
+
 	anubis.CookieName = *cookiePrefix + "-auth"
 	anubis.TestCookieName = *cookiePrefix + "-cookie-verification"
 	anubis.ForcedLanguage = *forcedLanguage
@@ -469,13 +498,15 @@ func main() {
 		JWTRestrictionHeader:     *jwtRestrictionHeader,
 		Logger:                   policy.Logger.With("subsystem", "anubis"),
 		DifficultyInJWT:          *difficultyInJWT,
+		AuthHooks:                authHooks,
 	})
 	if err != nil {
 		log.Fatalf("can't construct libanubis.Server: %v", err)
 	}
 
 	var h http.Handler
-	h = s
+	authHooks.AttachServer(s)
+	h = cust.NewHandler(s, authHooks)
 	h = internal.CustomRealIPHeader(*customRealIPHeader, h)
 	h = internal.RemoteXRealIP(*useRemoteAddress, *bindNetwork, h)
 	h = internal.XForwardedForToXRealIP(h)

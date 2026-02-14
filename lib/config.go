@@ -53,6 +53,7 @@ type Options struct {
 	PublicUrl                string
 	JWTRestrictionHeader     string
 	DifficultyInJWT          bool
+	AuthHooks                AuthHooks
 }
 
 func LoadPoliciesOrDefault(ctx context.Context, fname string, defaultDifficulty int, logLevel string) (*policy.ParsedConfig, error) {

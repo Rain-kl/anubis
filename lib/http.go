@@ -286,6 +286,22 @@ func (s *Server) RenderIndex(w http.ResponseWriter, r *http.Request, cr policy.C
 	handler.ServeHTTP(w, r)
 }
 
+func (s *Server) renderAuthPage(w http.ResponseWriter, r *http.Request, cr policy.CheckResult, rule *policy.Bot, returnHTTPStatusOnly bool) {
+	if s.opts.AuthHooks != nil {
+		handled, err := s.opts.AuthHooks.RenderAuthPage(w, r, cr, rule, returnHTTPStatusOnly)
+		if err != nil {
+			localizer := localization.GetLocalizer(r)
+			s.respondWithError(w, r, fmt.Sprintf("%s \"renderAuthPage\"", localizer.T("internal_server_error")), makeCode(err))
+			return
+		}
+		if handled {
+			return
+		}
+	}
+
+	s.RenderIndex(w, r, cr, rule, returnHTTPStatusOnly)
+}
+
 func (s *Server) constructRedirectURL(r *http.Request) (string, error) {
 	proto := r.Header.Get("X-Forwarded-Proto")
 	host := r.Header.Get("X-Forwarded-Host")
