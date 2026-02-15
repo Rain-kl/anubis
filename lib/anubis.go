@@ -219,6 +219,40 @@ func (s *Server) maybeReverseProxy(w http.ResponseWriter, r *http.Request, httpS
 		return
 	}
 
+	// When using password authentication mode with JWT validation, override ALLOW
+	// actions from thresholds to require authentication unless already authenticated
+	if s.opts.AuthHooks != nil && cr.Rule == config.RuleAllow {
+		// Check if request already has a valid authentication cookie
+		ckie, err := r.Cookie(anubis.CookieName)
+		hasValidAuth := false
+
+		if err == nil && ckie != nil {
+			if token, err := jwt.ParseWithClaims(ckie.Value, jwt.MapClaims{}, s.getTokenKeyfunc()); err == nil && token.Valid {
+				hasValidAuth = true
+			}
+		}
+
+		// If not authenticated, convert ALLOW to the configured fallback action
+		if !hasValidAuth {
+			lg.Debug("overriding ALLOW action in password auth mode - authentication required")
+			fallbackAction := s.opts.DefaultFallbackAction
+			if fallbackAction == "" {
+				fallbackAction = config.RuleChallenge
+			}
+			cr.Rule = fallbackAction
+			// Update rule challenge config if needed
+			if rule != nil && rule.Challenge == nil {
+				rule = &policy.Bot{
+					Challenge: &config.ChallengeRules{
+						Difficulty: s.policy.DefaultDifficulty,
+						Algorithm:  config.DefaultAlgorithm,
+					},
+					Rules: rule.Rules,
+				}
+			}
+		}
+	}
+
 	if s.checkRules(w, r, cr, lg, rule) {
 		return
 	}
@@ -686,7 +720,13 @@ func (s *Server) check(r *http.Request, lg *slog.Logger) (policy.CheckResult, *p
 		}
 	}
 
-	return cr("default/allow", config.RuleAllow, weight), &policy.Bot{
+	// Use configured default fallback action
+	fallbackAction := s.opts.DefaultFallbackAction
+	if fallbackAction == "" {
+		fallbackAction = config.RuleChallenge // Default to CHALLENGE if not set
+	}
+
+	return cr("default/"+string(fallbackAction), fallbackAction, weight), &policy.Bot{
 		Challenge: &config.ChallengeRules{
 			Difficulty: s.policy.DefaultDifficulty,
 			Algorithm:  config.DefaultAlgorithm,

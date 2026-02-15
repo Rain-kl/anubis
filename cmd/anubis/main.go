@@ -91,6 +91,7 @@ var (
 	publicUrl                = flag.String("public-url", "", "the externally accessible URL for this Anubis instance, used for constructing redirect URLs (e.g., for forwardAuth).")
 	xffStripPrivate          = flag.Bool("xff-strip-private", true, "if set, strip private addresses from X-Forwarded-For")
 	customRealIPHeader       = flag.String("custom-real-ip-header", "", "if set, read remote IP from header of this name (in case your environment doesn't set X-Real-IP header)")
+	defaultFallbackAction    = flag.String("default-fallback-action", "CHALLENGE", "default action when no rules match: ALLOW, CHALLENGE, or DENY")
 
 	thothInsecure        = flag.Bool("thoth-insecure", false, "if set, connect to Thoth over plain HTTP/2, don't enable this unless support told you to")
 	thothURL             = flag.String("thoth-url", "", "if set, URL for Thoth, the IP reputation database for Anubis")
@@ -437,6 +438,15 @@ func main() {
 		lg.Warn("REDIRECT_DOMAINS is not set, Anubis will only redirect to the same domain a request is coming from, see https://anubis.techaro.lol/docs/admin/configuration/redirect-domains")
 	}
 
+	// Validate default fallback action
+	fallbackAction := config.Rule(*defaultFallbackAction)
+	if err := fallbackAction.Valid(); err != nil {
+		log.Fatalf("invalid DEFAULT_FALLBACK_ACTION: %s, valid values are ALLOW, CHALLENGE, or DENY", *defaultFallbackAction)
+	}
+	if fallbackAction == config.RuleWeigh || fallbackAction == config.RuleBenchmark {
+		log.Fatalf("DEFAULT_FALLBACK_ACTION cannot be WEIGH or DEBUG_BENCHMARK, valid values are ALLOW, CHALLENGE, or DENY")
+	}
+
 	custCfg := cust.Config{
 		AuthMode:             *authMode,
 		ValidMode:            *validMode,
@@ -499,6 +509,7 @@ func main() {
 		Logger:                   policy.Logger.With("subsystem", "anubis"),
 		DifficultyInJWT:          *difficultyInJWT,
 		AuthHooks:                authHooks,
+		DefaultFallbackAction:    fallbackAction,
 	})
 	if err != nil {
 		log.Fatalf("can't construct libanubis.Server: %v", err)

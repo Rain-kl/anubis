@@ -54,6 +54,7 @@ type Options struct {
 	JWTRestrictionHeader     string
 	DifficultyInJWT          bool
 	AuthHooks                AuthHooks
+	DefaultFallbackAction    config.Rule // Action to take when no rules match (ALLOW, CHALLENGE, or DENY)
 }
 
 func LoadPoliciesOrDefault(ctx context.Context, fname string, defaultDifficulty int, logLevel string) (*policy.ParsedConfig, error) {
