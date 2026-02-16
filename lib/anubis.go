@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -564,6 +565,13 @@ func (s *Server) PassChallenge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rule = s.hydrateChallengeRule(rule, chall, lg)
+	if err := s.validateChallengeBinding(r, chall, rule); err != nil {
+		lg.Warn("challenge binding validation failed", "err", err)
+		s.ClearCookie(w, CookieOpts{Path: cookiePath, Host: r.Host})
+		s.ClearCookie(w, CookieOpts{Name: anubis.TestCookieName, Host: r.Host})
+		s.respondWithStatus(w, r, "invalid challenge binding", makeCode(err), http.StatusBadRequest)
+		return
+	}
 
 	impl, ok := challenge.Get(chall.Method)
 	if !ok {
@@ -657,6 +665,37 @@ func (s *Server) PassChallenge(w http.ResponseWriter, r *http.Request) {
 	challengesValidated.WithLabelValues(rule.Challenge.Algorithm).Inc()
 	lg.Debug("challenge passed, redirecting to app")
 	http.Redirect(w, r, redir, http.StatusFound)
+}
+
+func (s *Server) validateChallengeBinding(r *http.Request, chall *challenge.Challenge, rule *policy.Bot) error {
+	if chall == nil {
+		return fmt.Errorf("nil challenge")
+	}
+	if rule == nil {
+		return fmt.Errorf("nil policy rule")
+	}
+
+	expectedRuleHash := rule.Hash()
+	if chall.PolicyRuleHash == "" {
+		return fmt.Errorf("challenge missing policy rule hash")
+	}
+	if subtle.ConstantTimeCompare([]byte(chall.PolicyRuleHash), []byte(expectedRuleHash)) != 1 {
+		return fmt.Errorf("policy rule hash mismatch")
+	}
+
+	if expectedUA, ok := chall.Metadata["User-Agent"]; ok {
+		if subtle.ConstantTimeCompare([]byte(expectedUA), []byte(r.Header.Get("User-Agent"))) != 1 {
+			return fmt.Errorf("user agent mismatch")
+		}
+	}
+
+	if expectedIP, ok := chall.Metadata["X-Real-Ip"]; ok {
+		if subtle.ConstantTimeCompare([]byte(expectedIP), []byte(r.Header.Get("X-Real-Ip"))) != 1 {
+			return fmt.Errorf("real ip mismatch")
+		}
+	}
+
+	return nil
 }
 
 func cr(name string, rule config.Rule, weight int) policy.CheckResult {

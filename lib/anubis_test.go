@@ -1071,12 +1071,25 @@ func TestPassChallengeNilRuleChallengeFallback(t *testing.T) {
 	srv.policy.Thresholds = []*policy.Threshold{allowThreshold}
 	srv.policy.Bots = nil
 
+	checkReq := httptest.NewRequest(http.MethodGet, "https://example.com/", nil)
+	checkReq.Header.Set("X-Real-Ip", "203.0.113.4")
+	checkReq.Header.Set("User-Agent", "NilChallengeTester/1.0")
+	_, checkRule, err := srv.Check(checkReq)
+	if err != nil {
+		t.Fatalf("can't evaluate check rule for test setup: %v", err)
+	}
+
 	chall := challenge.Challenge{
-		ID:         "test-challenge",
-		Method:     "metarefresh",
-		RandomData: "apple cider",
-		IssuedAt:   time.Now().Add(-5 * time.Second),
-		Difficulty: 1,
+		ID:             "test-challenge",
+		Method:         "metarefresh",
+		RandomData:     "apple cider",
+		IssuedAt:       time.Now().Add(-5 * time.Second),
+		Difficulty:     1,
+		PolicyRuleHash: checkRule.Hash(),
+		Metadata: map[string]string{
+			"User-Agent": "NilChallengeTester/1.0",
+			"X-Real-Ip":  "203.0.113.4",
+		},
 	}
 
 	j := store.JSON[challenge.Challenge]{Underlying: srv.store}
@@ -1100,6 +1113,72 @@ func TestPassChallengeNilRuleChallengeFallback(t *testing.T) {
 
 	if rr.Code != http.StatusFound {
 		t.Fatalf("expected redirect when validating challenge, got %d", rr.Code)
+	}
+}
+
+func TestPassChallengeRejectsMetadataMismatch(t *testing.T) {
+	pol := loadPolicies(t, "testdata/zero_difficulty.yaml", 0)
+
+	srv := spawnAnubis(t, Options{
+		Next:   http.NewServeMux(),
+		Policy: pol,
+	})
+
+	allowThreshold, err := policy.ParsedThresholdFromConfig(config.Threshold{
+		Name: "allow-all",
+		Expression: &config.ExpressionOrList{
+			Expression: "true",
+		},
+		Action: config.RuleAllow,
+	})
+	if err != nil {
+		t.Fatalf("can't compile test threshold: %v", err)
+	}
+	srv.policy.Thresholds = []*policy.Threshold{allowThreshold}
+	srv.policy.Bots = nil
+
+	checkReq := httptest.NewRequest(http.MethodGet, "https://example.com/", nil)
+	checkReq.Header.Set("X-Real-Ip", "203.0.113.4")
+	checkReq.Header.Set("User-Agent", "ExpectedUA/1.0")
+	_, checkRule, err := srv.Check(checkReq)
+	if err != nil {
+		t.Fatalf("can't evaluate check rule for test setup: %v", err)
+	}
+
+	chall := challenge.Challenge{
+		ID:             "test-challenge-metadata-mismatch",
+		Method:         "metarefresh",
+		RandomData:     "apple cider",
+		IssuedAt:       time.Now().Add(-5 * time.Second),
+		Difficulty:     1,
+		PolicyRuleHash: checkRule.Hash(),
+		Metadata: map[string]string{
+			"User-Agent": "ExpectedUA/1.0",
+			"X-Real-Ip":  "203.0.113.4",
+		},
+	}
+
+	j := store.JSON[challenge.Challenge]{Underlying: srv.store}
+	if err := j.Set(context.Background(), "challenge:"+chall.ID, chall, time.Minute); err != nil {
+		t.Fatalf("can't insert challenge into store: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "https://example.com"+anubis.APIPrefix+"pass-challenge", nil)
+	q := req.URL.Query()
+	q.Set("redir", "/")
+	q.Set("id", chall.ID)
+	q.Set("challenge", chall.RandomData)
+	req.URL.RawQuery = q.Encode()
+	req.Header.Set("X-Real-Ip", "203.0.113.4")
+	req.Header.Set("User-Agent", "DifferentUA/2.0")
+	req.AddCookie(&http.Cookie{Name: anubis.TestCookieName, Value: chall.ID})
+
+	rr := httptest.NewRecorder()
+
+	srv.PassChallenge(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request for metadata mismatch, got %d", rr.Code)
 	}
 }
 

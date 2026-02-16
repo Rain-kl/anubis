@@ -144,6 +144,12 @@ func (h *Hooks) HandleAuthSuccess(w http.ResponseWriter, r *http.Request, cr pol
 	if h == nil {
 		return false, nil
 	}
+	// In password mode, only the dedicated password endpoint can issue auth.
+	// This prevents challenge success paths from minting auth cookies/whitelist entries.
+	if h.cfg.AuthMode == AuthModePassword && !h.isPasswordAuthIssuanceRequest(r) {
+		h.logger.Warn("blocked auth issuance from non-password endpoint", "method", r.Method, "path", r.URL.Path)
+		return true, nil
+	}
 
 	switch h.cfg.ValidMode {
 	case ValidModeWhitelist:
@@ -171,6 +177,13 @@ func (h *Hooks) HandleAuthSuccess(w http.ResponseWriter, r *http.Request, cr pol
 	default:
 		return false, nil
 	}
+}
+
+func (h *Hooks) isPasswordAuthIssuanceRequest(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	return r.Method == http.MethodPost && r.URL.Path == h.passwordEndpointPath()
 }
 
 func (h *Hooks) HandlePassword(w http.ResponseWriter, r *http.Request) {
