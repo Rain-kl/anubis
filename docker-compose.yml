@@ -6,11 +6,38 @@ services:
 #      - "9090:9090"
     command: ["-use-remote-address"]
     environment:
+      # Upstream app
       TARGET: "http://host.docker.internal:3923"
+
+      # Auth flow
       AUTH_MODE: "pow"
       VALID_MODE: "jwt"
-      PASSWORD: "change-me"
-      PASSWORD_MAX_FAILS: "10"
-      PASSWORD_BAN_TIME: "900"
-      WHITELIST_TIMEOUT: "3600"
+      DIFFICULTY: "4"
+      COOKIE_EXPIRATION_TIME: "168h"
+      JWT_RESTRICTION_HEADER: "X-Real-IP"
+      DIFFICULTY_IN_JWT: "false"
+
+      # Cookie/session behavior
+      COOKIE_PREFIX: "techaro.lol-anubis"
+      COOKIE_SECURE: "true"
+      COOKIE_SAME_SITE: "None"
+#      COOKIE_DYNAMIC_DOMAIN: "true"
+#      COOKIE_DOMAIN: "example.com"
+#      COOKIE_PARTITIONED: "false"
+
+      # Reverse proxy / redirect safety
+#      PUBLIC_URL: "https://anubis.example.com"
+#      REDIRECT_DOMAINS: "https://example.com,https://www.example.com"
+
+      # Logging / defaults
+      SLOG_LEVEL: "INFO"
       DEFAULT_FALLBACK_ACTION: "CHALLENGE"
+
+      # If you switch to password mode, enable these:
+#      PASSWORD: "change-me"
+#      PASSWORD_MAX_FAILS: "10"
+#      PASSWORD_BAN_TIME: "900"
+#      WHITELIST_TIMEOUT: "3600"
+
+      # JWT signing key (set one in production, otherwise random key is generated)
+#      HS512_SECRET: "replace-with-a-long-random-secret"

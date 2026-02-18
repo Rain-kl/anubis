@@ -76,6 +76,20 @@ func (h *Hooks) AttachServer(s *lib.Server) {
 	h.server = s
 }
 
+func (h *Hooks) AuthMode() string {
+	if h == nil {
+		return ""
+	}
+	return h.cfg.AuthMode
+}
+
+func (h *Hooks) ValidMode() string {
+	if h == nil {
+		return ""
+	}
+	return h.cfg.ValidMode
+}
+
 func (h *Hooks) ValidateRequest(r *http.Request, _ policy.CheckResult, _ *policy.Bot) (lib.ValidationDecision, error) {
 	if h == nil || h.cfg.ValidMode != ValidModeWhitelist {
 		return lib.ValidationSkip, nil

@@ -91,7 +91,7 @@ var (
 	publicUrl                = flag.String("public-url", "", "the externally accessible URL for this Anubis instance, used for constructing redirect URLs (e.g., for forwardAuth).")
 	xffStripPrivate          = flag.Bool("xff-strip-private", true, "if set, strip private addresses from X-Forwarded-For")
 	customRealIPHeader       = flag.String("custom-real-ip-header", "", "if set, read remote IP from header of this name (in case your environment doesn't set X-Real-IP header)")
-	defaultFallbackAction    = flag.String("default-fallback-action", "CHALLENGE", "default action when no rules match: ALLOW, CHALLENGE, or DENY")
+	defaultFallbackAction    = flag.String("default-fallback-action", "", "default action when no rules match: ALLOW, CHALLENGE, or DENY (default: ALLOW for pow mode, CHALLENGE for password mode)")
 
 	thothInsecure        = flag.Bool("thoth-insecure", false, "if set, connect to Thoth over plain HTTP/2, don't enable this unless support told you to")
 	thothURL             = flag.String("thoth-url", "", "if set, URL for Thoth, the IP reputation database for Anubis")
@@ -436,6 +436,18 @@ func main() {
 		}
 	} else {
 		lg.Warn("REDIRECT_DOMAINS is not set, Anubis will only redirect to the same domain a request is coming from, see https://anubis.techaro.lol/docs/admin/configuration/redirect-domains")
+	}
+
+	// Set auth-mode-specific fallback default when not explicitly configured.
+	if strings.TrimSpace(*defaultFallbackAction) == "" {
+		switch strings.ToLower(strings.TrimSpace(*authMode)) {
+		case cust.AuthModePow:
+			*defaultFallbackAction = string(config.RuleAllow)
+		case cust.AuthModePassword:
+			*defaultFallbackAction = string(config.RuleChallenge)
+		default:
+			*defaultFallbackAction = string(config.RuleChallenge)
+		}
 	}
 
 	// Validate default fallback action

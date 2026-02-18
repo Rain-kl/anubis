@@ -21,6 +21,12 @@ const (
 // AuthHooks provides optional overrides for authentication and validation flows.
 // If nil, Anubis uses the built-in PoW + JWT flow.
 type AuthHooks interface {
+	// AuthMode returns the selected auth mode (e.g. "pow", "password").
+	AuthMode() string
+
+	// ValidMode returns the selected validation mode (e.g. "jwt", "whitelist").
+	ValidMode() string
+
 	// ValidateRequest is called before JWT validation for challenge rules.
 	// Return ValidationSkip to use the built-in JWT flow.
 	ValidateRequest(r *http.Request, cr policy.CheckResult, rule *policy.Bot) (ValidationDecision, error)

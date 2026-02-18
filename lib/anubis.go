@@ -220,38 +220,27 @@ func (s *Server) maybeReverseProxy(w http.ResponseWriter, r *http.Request, httpS
 		return
 	}
 
-	// When using password authentication mode with JWT validation, override ALLOW
-	// actions from thresholds to require authentication unless already authenticated
-	if s.opts.AuthHooks != nil && cr.Rule == config.RuleAllow {
-		// Check if request already has a valid authentication cookie
-		ckie, err := r.Cookie(anubis.CookieName)
-		hasValidAuth := false
-
-		if err == nil && ckie != nil {
-			if token, err := jwt.ParseWithClaims(ckie.Value, jwt.MapClaims{}, s.getTokenKeyfunc()); err == nil && token.Valid {
-				hasValidAuth = true
-			}
+	// Password mode is strict auth-gating:
+	// 1) unauthenticated requests always go to auth page
+	// 2) authenticated requests are allowed to upstream regardless of bot action
+	if s.opts.AuthHooks != nil && s.opts.AuthHooks.AuthMode() == "password" {
+		authenticated, err := s.isPasswordModeAuthenticated(r, cr, rule)
+		if err != nil {
+			lg.Error("password-mode auth check failed", "err", err)
+			localizer := localization.GetLocalizer(r)
+			s.respondWithError(w, r, fmt.Sprintf("%s \"maybeReverseProxy.passwordModeAuth\"", localizer.T("internal_server_error")), makeCode(err))
+			return
+		}
+		if !authenticated {
+			lg.Debug("password mode: request is not authenticated, rendering auth page")
+			s.ClearCookie(w, CookieOpts{Path: cookiePath, Host: r.Host})
+			s.renderAuthPage(w, r, cr, rule, httpStatusOnly)
+			return
 		}
 
-		// If not authenticated, convert ALLOW to the configured fallback action
-		if !hasValidAuth {
-			lg.Debug("overriding ALLOW action in password auth mode - authentication required")
-			fallbackAction := s.opts.DefaultFallbackAction
-			if fallbackAction == "" {
-				fallbackAction = config.RuleChallenge
-			}
-			cr.Rule = fallbackAction
-			// Update rule challenge config if needed
-			if rule != nil && rule.Challenge == nil {
-				rule = &policy.Bot{
-					Challenge: &config.ChallengeRules{
-						Difficulty: s.policy.DefaultDifficulty,
-						Algorithm:  config.DefaultAlgorithm,
-					},
-					Rules: rule.Rules,
-				}
-			}
-		}
+		r.Header.Add("X-Anubis-Status", "PASS")
+		s.ServeHTTPNext(w, r)
+		return
 	}
 
 	if s.checkRules(w, r, cr, lg, rule) {
@@ -349,6 +338,75 @@ func (s *Server) maybeReverseProxy(w http.ResponseWriter, r *http.Request, httpS
 
 	r.Header.Add("X-Anubis-Status", "PASS")
 	s.ServeHTTPNext(w, r)
+}
+
+func (s *Server) isPasswordModeAuthenticated(r *http.Request, cr policy.CheckResult, rule *policy.Bot) (bool, error) {
+	if s.opts.AuthHooks == nil {
+		return false, nil
+	}
+
+	switch s.opts.AuthHooks.ValidMode() {
+	case "whitelist":
+		decision, err := s.opts.AuthHooks.ValidateRequest(r, cr, rule)
+		if err != nil {
+			return false, err
+		}
+		return decision == ValidationAllow, nil
+	case "jwt":
+		return s.hasValidJWTCookie(r, false, nil)
+	default:
+		decision, err := s.opts.AuthHooks.ValidateRequest(r, cr, rule)
+		if err != nil {
+			return false, err
+		}
+		return decision == ValidationAllow, nil
+	}
+}
+
+func (s *Server) hasValidJWTCookie(r *http.Request, requirePolicyRule bool, rule *policy.Bot) (bool, error) {
+	ckie, err := r.Cookie(anubis.CookieName)
+	if err != nil {
+		return false, nil
+	}
+
+	if err := ckie.Valid(); err != nil {
+		return false, nil
+	}
+
+	if time.Now().After(ckie.Expires) && !ckie.Expires.IsZero() {
+		return false, nil
+	}
+
+	token, err := jwt.ParseWithClaims(ckie.Value, jwt.MapClaims{}, s.getTokenKeyfunc(), jwt.WithExpirationRequired(), jwt.WithStrictDecoding())
+	if err != nil || !token.Valid {
+		return false, nil
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return false, nil
+	}
+
+	if requirePolicyRule {
+		if rule == nil {
+			return false, nil
+		}
+		policyRule, ok := claims["policyRule"].(string)
+		if !ok {
+			return false, nil
+		}
+		if policyRule != rule.Hash() {
+			return false, nil
+		}
+	}
+
+	if s.opts.JWTRestrictionHeader != "" {
+		if claims["restriction"] != internal.SHA256sum(r.Header.Get(s.opts.JWTRestrictionHeader)) {
+			return false, nil
+		}
+	}
+
+	return true, nil
 }
 
 func (s *Server) checkRules(w http.ResponseWriter, r *http.Request, cr policy.CheckResult, lg *slog.Logger, rule *policy.Bot) bool {
