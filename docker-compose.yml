@@ -28,6 +28,7 @@ services:
       # Reverse proxy / redirect safety
 #      PUBLIC_URL: "https://anubis.example.com"
 #      REDIRECT_DOMAINS: "https://example.com,https://www.example.com"
+      TRUST_X_ORIGINAL_URI: "false"
 
       # Logging / defaults
       SLOG_LEVEL: "INFO"

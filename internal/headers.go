@@ -109,6 +109,20 @@ func XForwardedForToXRealIP(next http.Handler) http.Handler {
 	})
 }
 
+// TrustXOriginalURI controls whether X-Original-URI from upstream is trusted.
+// When disabled, the header is removed to prevent client header injection from
+// affecting path-based policy decisions.
+func TrustXOriginalURI(enabled bool, next http.Handler) http.Handler {
+	if enabled {
+		return next
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Header.Del("X-Original-URI")
+		next.ServeHTTP(w, r)
+	})
+}
+
 // XForwardedForUpdate sets or updates the X-Forwarded-For header, adding
 // the known remote address to an existing chain if present
 func XForwardedForUpdate(stripPrivate bool, next http.Handler) http.Handler {

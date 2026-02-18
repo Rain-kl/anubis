@@ -64,6 +64,7 @@ If you want to try this out, visit the Anubis documentation site at [anubis.tech
 | --- | --- | --- | --- |
 | `PUBLIC_URL`（可选） | `https://anubis.example.com` | Anubis 对外可访问地址，用于构造某些重定向 URL（如 forwardAuth 场景）。 | 部署在网关后、外网域名与容器内地址不一致时设置。 |
 | `REDIRECT_DOMAINS`（可选） | `https://example.com,https://www.example.com` | 限制允许重定向的目标域名，降低开放重定向风险。 | 建议生产始终配置为你的业务域名列表。 |
+| `TRUST_X_ORIGINAL_URI` | `false` | 是否信任上游传入的 `X-Original-URI`。默认 `false` 会忽略该头，防止客户端注入影响路径规则。 | 仅在 `subrequest/forwardAuth` 部署且确认头由受信代理设置时改为 `true`。 |
 
 ### 5) 日志与密码模式（按需）
 

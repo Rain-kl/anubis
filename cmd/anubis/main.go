@@ -91,6 +91,7 @@ var (
 	publicUrl                = flag.String("public-url", "", "the externally accessible URL for this Anubis instance, used for constructing redirect URLs (e.g., for forwardAuth).")
 	xffStripPrivate          = flag.Bool("xff-strip-private", true, "if set, strip private addresses from X-Forwarded-For")
 	customRealIPHeader       = flag.String("custom-real-ip-header", "", "if set, read remote IP from header of this name (in case your environment doesn't set X-Real-IP header)")
+	trustXOriginalURI        = flag.Bool("trust-x-original-uri", false, "if true, trust X-Original-URI from upstream proxy (required for subrequest/forwardAuth setups)")
 	defaultFallbackAction    = flag.String("default-fallback-action", "", "default action when no rules match: ALLOW, CHALLENGE, or DENY (default: ALLOW for pow mode, CHALLENGE for password mode)")
 
 	thothInsecure        = flag.Bool("thoth-insecure", false, "if set, connect to Thoth over plain HTTP/2, don't enable this unless support told you to")
@@ -533,6 +534,7 @@ func main() {
 	h = internal.CustomRealIPHeader(*customRealIPHeader, h)
 	h = internal.RemoteXRealIP(*useRemoteAddress, *bindNetwork, h)
 	h = internal.XForwardedForToXRealIP(h)
+	h = internal.TrustXOriginalURI(*trustXOriginalURI, h)
 	h = internal.XForwardedForUpdate(*xffStripPrivate, h)
 	h = internal.JA4H(h)
 
