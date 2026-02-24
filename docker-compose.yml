@@ -5,6 +5,8 @@ services:
       - "8923:8923"
 #      - "9090:9090"
     command: ["-use-remote-address"]
+    volumes:
+      - ./data/custom/botPolicies.custom.yaml:/data/cfg/botPolicies.custom.yaml:ro
     environment:
       # Upstream app
       TARGET: "http://host.docker.internal:3923"
@@ -33,6 +35,7 @@ services:
       # Logging / defaults
       SLOG_LEVEL: "INFO"
       DEFAULT_FALLBACK_ACTION: "CHALLENGE"
+      POLICY_FNAME: "/data/cfg/botPolicies.custom.yaml"
 
       # If you switch to password mode, enable these:
 #      PASSWORD: "change-me"

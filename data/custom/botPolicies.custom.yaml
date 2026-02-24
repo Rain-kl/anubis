@@ -1,0 +1,22 @@
+# Custom policy for path-based allow/challenge rules.
+# Rule order matters: first matching ALLOW/CHALLENGE/DENY returns immediately.
+
+bots:
+  # 1) Example allowlist rule: allow Gitea feed paths directly.
+  - import: (data)/apps/gitea-rss-feeds.yaml
+
+  # 1.1) Example allowlist rules for common static/public paths.
+  - name: allow-healthz
+    path_regex: ^/healthz$
+    action: ALLOW
+
+  # 2) Example challenge rule: always challenge sensitive paths.
+  - name: challenge-sensitive-paths
+    path_regex: ^/(admin|login|signin|wp-admin)(/.*)?$
+    action: CHALLENGE
+    challenge:
+      algorithm: fast
+      difficulty: 4
+
+  # Keep the built-in default rules after custom overrides.
+  - import: (data)/meta/default-config.yaml

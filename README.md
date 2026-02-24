@@ -76,6 +76,117 @@ If you want to try this out, visit the Anubis documentation site at [anubis.tech
 | `PASSWORD_BAN_TIME`（仅 password 模式） | `900` | 超过失败阈值后的封禁时长（秒）。 | 需要更强限制可上调。 |
 | `WHITELIST_TIMEOUT`（仅 whitelist 模式） | `3600` | IP 白名单模式下的有效期（秒）。 | `VALID_MODE=whitelist` 时按业务调整。 |
 
+## 策略加载与覆盖关系
+
+### 1) 默认会加载什么
+
+- 未设置 `POLICY_FNAME` 时，Anubis 会加载内置策略 `(data)/botPolicies.yaml`。
+- 默认不会自动加载 `data/custom/*`。
+- 默认也不会自动加载 `(data)/apps` 或 `(data)/meta` 整个目录，只会加载 `botPolicies.yaml` 中明确写了 `import` 的文件。
+
+### 2) 设置 `POLICY_FNAME` 后会怎样
+
+- 设置 `POLICY_FNAME` 后，Anubis 只读取你指定的策略文件，不再自动读取默认 `(data)/botPolicies.yaml`。
+- 如果你想在自定义策略里保留默认行为，需要手动 `import`（例如 `- import: (data)/meta/default-config.yaml`）。
+
+### 3) `import` 是什么
+
+- `import` 会把目标规则文件“展开”到当前 `bots` 列表中，按当前顺序参与匹配。
+- 规则是按顺序执行，命中 `ALLOW` / `DENY` / `CHALLENGE` 就立即返回；`WEIGH` 只会累计权重并继续。
+
+### 4) 只写黑名单会发生什么
+
+- 如果你只配置黑名单（例如若干 `DENY`）且不导入默认配置，那么 `bots` 阶段只会执行这些黑名单。
+- 但若你没显式写 `thresholds`，系统会自动补默认阈值。
+- 在“只有黑名单且没有 WEIGH”的常见情况下，未命中黑名单的请求通常会 `ALLOW`（因为默认阈值中 `weight <= 0` 为放行）。
+
+## 策略配置教程（含示例）
+
+### 1) 最小流程
+
+1. 新建策略文件，例如 `data/custom/botPolicies.custom.yaml`。
+2. 在 `bots:` 下按顺序写规则（顺序非常重要）。
+3. 需要保留默认行为时，在文件里显式 `import` 默认规则。
+4. 在 `docker-compose.yml` 中挂载该文件，并设置 `POLICY_FNAME`。
+5. 重启容器使配置生效。
+
+### 2) 示例 A: 仅黑名单（其余默认放行）
+
+```yaml
+bots:
+  - name: deny-bad-bot
+    user_agent_regex: (?i:evil-bot|scrapy|python-requests)
+    action: DENY
+```
+
+说明:
+- 这个配置只定义了黑名单规则。
+- 若未额外定义 `thresholds`，未命中黑名单的请求通常会走默认阈值中的 `ALLOW`。
+
+### 3) 示例 B: 路径白名单 + 敏感路径 challenge
+
+```yaml
+bots:
+  - name: allow-healthz
+    path_regex: ^/healthz$
+    action: ALLOW
+
+  - name: allow-public-api
+    path_regex: ^/api/public(/.*)?$
+    action: ALLOW
+
+  - name: challenge-sensitive
+    path_regex: ^/(admin|login|signin)(/.*)?$
+    action: CHALLENGE
+    challenge:
+      algorithm: fast
+      difficulty: 4
+```
+
+说明:
+- 放行规则放在前面，避免被后续规则覆盖。
+- 命中 `CHALLENGE` 后会立即进入挑战流程。
+
+### 4) 示例 C: 在默认规则基础上叠加自定义
+
+```yaml
+bots:
+  - name: allow-healthz
+    path_regex: ^/healthz$
+    action: ALLOW
+
+  - name: challenge-sensitive
+    path_regex: ^/(admin|login|signin)(/.*)?$
+    action: CHALLENGE
+    challenge:
+      algorithm: fast
+      difficulty: 4
+
+  - import: (data)/meta/default-config.yaml
+```
+
+说明:
+- `POLICY_FNAME` 指向自定义文件后，默认策略不会自动加载。
+- 通过 `import: (data)/meta/default-config.yaml` 可以把默认规则重新引入。
+
+### 5) Docker Compose 配置示例
+
+```yaml
+services:
+  anubis:
+    image: ghcr.io/rain-kl/anubis:latest
+    volumes:
+      - ./data/custom/botPolicies.custom.yaml:/data/cfg/botPolicies.custom.yaml:ro
+    environment:
+      POLICY_FNAME: "/data/cfg/botPolicies.custom.yaml"
+      DEFAULT_FALLBACK_ACTION: "CHALLENGE"
+```
+
+应用配置:
+```bash
+docker compose up -d --force-recreate anubis
+```
+
 ## 默认机器人判定规则
 
 当前默认配置 `data/botPolicies.yaml` 实际启用的默认判定规则说明。
