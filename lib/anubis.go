@@ -503,7 +503,10 @@ func (s *Server) isPasswordModeAuthenticated(r *http.Request, cr policy.CheckRes
 }
 
 func (s *Server) hasValidJWTCookie(r *http.Request, requirePolicyRule bool, rule *policy.Bot) (bool, error) {
-	ckie, err := r.Cookie(anubis.CookieName)
+	// Use getCookie so the dynamic cookie-name suffix applied by SetCookie is
+	// honoured; reading the bare name would never match when --dynamic-cookie-suffix
+	// is enabled (the default).
+	ckie, err := s.getCookie(r, anubis.CookieName)
 	if err != nil {
 		return false, nil
 	}
