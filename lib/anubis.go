@@ -817,10 +817,12 @@ func (s *Server) check(r *http.Request, lg *slog.Logger) (policy.CheckResult, *p
 		}
 	}
 
-	// Use configured default fallback action
+	// Use configured default fallback action. The library default matches
+	// upstream (ALLOW); cmd/anubis sets a mode-specific default via
+	// Options.DefaultFallbackAction.
 	fallbackAction := s.opts.DefaultFallbackAction
 	if fallbackAction == "" {
-		fallbackAction = config.RuleChallenge // Default to CHALLENGE if not set
+		fallbackAction = config.RuleAllow
 	}
 
 	return cr("default/"+string(fallbackAction), fallbackAction, weight), &policy.Bot{
