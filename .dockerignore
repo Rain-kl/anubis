@@ -1,0 +1,12 @@
+.git
+.github
+node_modules
+var
+docs
+test
+web/static/js
+web/static/locales
+xess/xess.min.css
+lib/challenge/preact/static/app.js
+*.deb
+*.rpm

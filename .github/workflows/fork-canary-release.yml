@@ -1,11 +1,25 @@
-name: Fork release binaries
+name: Fork canary release
+
+# Every push to canary immediately publishes:
+#  - docker image ghcr.io/<repo>:canary  (handled by docker.yml)
+#  - a prerelease named canary-<short-sha> with cross-platform binaries
+#
+# Binary version (ldflags + filename) is the HEAD commit hash.
 
 on:
+  push:
+    branches: ["canary"]
   workflow_dispatch:
 
 permissions:
   contents: write
   actions: write
+
+# Never cancel an in-flight release; a cancelled run can leave a
+# half-uploaded prerelease behind.
+concurrency:
+  group: fork-canary-release
+  cancel-in-progress: false
 
 env:
   GO_VERSION: "1.25.4"
@@ -13,7 +27,68 @@ env:
 
 jobs:
   # ──────────────────────────────────────────────
-  # Job 1: Build shared front-end assets (platform-independent)
+  # Job 0: Publish the canary container image
+  # ──────────────────────────────────────────────
+  docker:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    env:
+      DOCKER_METADATA_SET_OUTPUT_ENV: "true"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-tags: true
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - uses: ko-build/setup-ko@d006021bd0c28d1ce33a07e7943d48b079944c8d # v0.9
+
+      - name: Log into registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set lowercase image name
+        run: |
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=canary
+            type=sha,format=short,prefix=canary-
+
+      - name: Build and push
+        env:
+          DOCKER_REPO: ${{ env.IMAGE }}
+          SLOG_LEVEL: debug
+        run: |
+          npm ci
+          npm run container
+
+  # ──────────────────────────────────────────────
+  # Job 1: Build front-end assets once (platform independent)
   # ──────────────────────────────────────────────
   build-assets:
     runs-on: ubuntu-latest
@@ -21,8 +96,6 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-          fetch-tags: true
-          fetch-depth: 0
 
       - name: Install system deps
         run: |
@@ -33,28 +106,20 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
-        with:
-          go-version: ${{ env.GO_VERSION }}
-
       - name: Install Node dependencies
         run: npm ci
 
-      - name: Generate & build front-end assets
-        run: |
-          go mod download
-          go generate ./...
-          ./web/build.sh
-          ./xess/build.sh
+      - name: Build front-end assets
+        run: npm run assets
 
       - name: Upload assets artifact
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: shared-assets
+          name: canary-assets
           path: |
             web/static/
             xess/xess.min.css
-            lib/
+            lib/challenge/preact/static/app.js
           retention-days: 1
 
   # ──────────────────────────────────────────────
@@ -83,17 +148,15 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-          fetch-tags: true
-          fetch-depth: 0
 
       - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Download shared assets
+      - name: Download asset artifact
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
-          name: shared-assets
+          name: canary-assets
           path: .
 
       - name: Build binary
@@ -102,16 +165,17 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
         run: |
+          set -euo pipefail
           go mod download
 
-          VERSION="build-$(date -u +'%Y%m%d-%H%M%S')"
+          VERSION="$(git rev-parse --short HEAD)"
 
           EXT=""
           if [ "$GOOS" = "windows" ]; then
             EXT=".exe"
           fi
 
-          OUTPUT_NAME="anubis-${GOOS}-${GOARCH}${EXT}"
+          OUTPUT_NAME="anubis-${GOOS}-${GOARCH}-${VERSION}${EXT}"
 
           go build -trimpath \
             -ldflags="-s -w -X 'github.com/TecharoHQ/anubis.Version=${VERSION}'" \
@@ -128,7 +192,7 @@ jobs:
           retention-days: 1
 
   # ──────────────────────────────────────────────
-  # Job 3: Create release and upload all binaries
+  # Job 3: Publish prerelease for this commit
   # ──────────────────────────────────────────────
   release:
     needs: build-binary
@@ -137,6 +201,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Download all binary artifacts
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
@@ -145,25 +210,29 @@ jobs:
           path: dist/
           merge-multiple: true
 
-      - name: Create release tag
-        id: tag
-        run: |
-          TAG="build-$(date -u +'%Y%m%d-%H%M%S')"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "Release tag: ${TAG}"
-
-      - name: Create GitHub release and upload assets
+      - name: Create prerelease
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${{ steps.tag.outputs.tag }}"
+          set -euo pipefail
 
-          # Create the tag on the current commit
-          git tag "${TAG}"
-          git push origin "${TAG}"
+          VERSION="$(git rev-parse --short HEAD)"
+          TAG="canary-${VERSION}"
 
-          # Create the release and upload all binaries
+          # Idempotent: a re-run of the same commit replaces the snapshot.
+          gh release delete "${TAG}" --yes --cleanup-tag 2>/dev/null || true
+
+          cat > notes.md <<EOF
+          Canary build of commit \`${GITHUB_SHA}\` on branch \`canary\`.
+
+          Docker image: \`ghcr.io/${{ github.repository }}:canary\`
+
+          Binary version: \`${VERSION}\`
+          EOF
+
           gh release create "${TAG}" \
-            --title "Build ${TAG}" \
-            --notes "Automated build at $(date -u +'%Y-%m-%d %H:%M:%S UTC')" \
+            --target "${GITHUB_SHA}" \
+            --prerelease \
+            --title "Canary ${VERSION}" \
+            --notes-file notes.md \
             dist/*
