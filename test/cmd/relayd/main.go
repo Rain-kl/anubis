@@ -32,7 +32,7 @@ func main() {
 	flagenv.Parse()
 	flag.Parse()
 
-	internal.InitSlog(*slogLevel)
+	internal.InitSlog(*slogLevel, os.Stderr)
 
 	slog.Info("starting",
 		"bind", *bind,
@@ -102,7 +102,7 @@ func main() {
 
 				host, _, err := net.SplitHostPort(r.RemoteAddr)
 				if err == nil {
-					r.Header.Set("X-Real-Ip", host)
+					r.Header.Set("X-Real-IP", host)
 				}
 			},
 			Transport: &http.Transport{

@@ -3,13 +3,14 @@
 import CodeBlock from "@theme/CodeBlock";
 
 To use Anubis with HAProxy, you have two variants:
-  - simple - stick Anubis between HAProxy and your application backend (simple)
-    - perfect if you only have a single application in general
-  - advanced - force Anubis challenge by default and route to the application backend by HAProxy if the challenge is correct
-    - useful for complex setups
-    - routing can be done in HAProxy
-    - define ACLs in HAProxy for domains, paths etc which are required/excluded regarding Anubis
-    - HAProxy 3.0 recommended
+
+- simple - stick Anubis between HAProxy and your application backend (simple)
+  - perfect if you only have a single application in general
+- advanced - force Anubis challenge by default and route to the application backend by HAProxy if the challenge is correct
+  - useful for complex setups
+  - routing can be done in HAProxy
+  - define ACLs in HAProxy for domains, paths etc which are required/excluded regarding Anubis
+  - HAProxy 3.0 or above recommended
 
 ## Simple Variant
 
@@ -48,6 +49,8 @@ This simply enables SSL offloading, sets some useful and required headers and ro
 
 Due to the fact that HAProxy can decode JWT, we are able to verify the Anubis token directly in HAProxy and route the traffic to the specific backends ourselves.
 
+Mind that rule logic to allow Git HTTP and other legit bot traffic to bypass is delegated from Anubis to HAProxy then. If required, you should implement any whitelisting in HAProxy using `acl_anubis_ignore` yourself.
+
 In this example are three applications behind one HAProxy frontend. Only App1 and App2 are secured via Anubis; App3 is open for everyone. The path `/excluded/path` can also be accessed by anyone.
 
 ```mermaid
@@ -83,6 +86,7 @@ import advancedAnubis from "!!raw-loader!./haproxy/advanced-config.env";
 <CodeBlock language="bash">{advancedAnubis}</CodeBlock>
 
 It's important to use `HS512_SECRET` which HAProxy understands. Please replace `<SECRET-HERE>` with your own secret string (alphanumerical string with 128 characters recommended).
+Setting `DYNAMIC_COOKIE_SUFFIX` to `false` is required from Anubis v1.28 as HAProxy can only use a specific cookie name.
 
 You can set Anubis to force a challenge for every request using the following policy file:
 

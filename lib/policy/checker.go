@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -41,9 +42,9 @@ func NewRemoteAddrChecker(cidrs []string) (checker.Impl, error) {
 }
 
 func (rac *RemoteAddrChecker) Check(r *http.Request) (bool, error) {
-	host := r.Header.Get("X-Real-Ip")
+	host := r.Header.Get("X-Real-IP")
 	if host == "" {
-		return false, fmt.Errorf("%w: header X-Real-Ip is not set", ErrMisconfiguration)
+		return false, fmt.Errorf("%w: header X-Real-IP is not set", ErrMisconfiguration)
 	}
 
 	addr, err := netip.ParseAddr(host)
@@ -82,7 +83,13 @@ func NewHeaderMatchesChecker(header, rexStr string) (checker.Impl, error) {
 }
 
 func (hmc *HeaderMatchesChecker) Check(r *http.Request) (bool, error) {
-	if hmc.regexp.MatchString(r.Header.Get(hmc.header)) {
+	values := r.Header.Values(hmc.header)
+	for _, value := range values {
+		if hmc.regexp.MatchString(value) {
+			return true, nil
+		}
+	}
+	if hmc.regexp.MatchString(strings.Join(values, ",")) {
 		return true, nil
 	}
 
@@ -94,27 +101,36 @@ func (hmc *HeaderMatchesChecker) Hash() string {
 }
 
 type PathChecker struct {
-	regexp *regexp.Regexp
-	hash   string
+	regexp         *regexp.Regexp
+	hash           string
+	subRequestMode bool
 }
 
-func NewPathChecker(rexStr string) (checker.Impl, error) {
+func NewPathChecker(rexStr string, subrequestMode bool) (checker.Impl, error) {
 	rex, err := regexp.Compile(strings.TrimSpace(rexStr))
 	if err != nil {
 		return nil, fmt.Errorf("%w: regex %s failed parse: %w", ErrMisconfiguration, rexStr, err)
 	}
-	return &PathChecker{rex, internal.FastHash(rexStr)}, nil
+	return &PathChecker{rex, internal.FastHash(rexStr), subrequestMode}, nil
 }
 
 func (pc *PathChecker) Check(r *http.Request) (bool, error) {
-	originalUrl := r.Header.Get("X-Original-URI")
-	if originalUrl != "" {
-		if pc.regexp.MatchString(originalUrl) {
-			return true, nil
+	if pc.subRequestMode {
+		originalUrl := r.Header.Get("X-Original-Uri")
+		if originalUrl == "" {
+			originalUrl = r.Header.Get("X-Forwarded-Uri")
+		}
+		if originalUrl != "" {
+			if parsed, err := url.ParseRequestURI(originalUrl); err == nil {
+				originalUrl = parsed.Path
+			}
+			if pc.regexp.MatchString(pathForPolicy(originalUrl)) {
+				return true, nil
+			}
 		}
 	}
 
-	if pc.regexp.MatchString(r.URL.Path) {
+	if pc.regexp.MatchString(pathForPolicy(r.URL.Path)) {
 		return true, nil
 	}
 
@@ -134,8 +150,10 @@ type headerExistsChecker struct {
 }
 
 func (hec headerExistsChecker) Check(r *http.Request) (bool, error) {
-	if r.Header.Get(hec.header) != "" {
-		return true, nil
+	for _, value := range r.Header.Values(hec.header) {
+		if value != "" {
+			return true, nil
+		}
 	}
 
 	return false, nil
@@ -169,4 +187,46 @@ func NewHeadersChecker(headermap map[string]string) (checker.Impl, error) {
 	}
 
 	return result, nil
+}
+
+func (pc *ParsedConfig) ValidateRequestPath(r *http.Request) error {
+	paths := []string{r.URL.Path}
+	if pc.SubrequestMode {
+		original := r.Header.Get("X-Original-Uri")
+		if original == "" {
+			original = r.Header.Get("X-Forwarded-Uri")
+		}
+		if original != "" {
+			u, err := url.ParseRequestURI(original)
+			if err != nil {
+				return ErrMisconfiguration
+			}
+			paths = append(paths, u.Path)
+		}
+	}
+	for _, p := range paths {
+		for segment := range strings.SplitSeq(p, "/") {
+			if segment == "." || segment == ".." {
+				return ErrMisconfiguration
+			}
+		}
+	}
+	return nil
+}
+
+// pathForPolicy collapses repeated slashes for rule evaluation without changing
+// the path forwarded to the origin. Dot segments are rejected separately.
+func pathForPolicy(p string) string {
+	if !strings.Contains(p, "//") {
+		return p
+	}
+	var result strings.Builder
+	result.Grow(len(p))
+	for i := range len(p) {
+		if p[i] == '/' && i > 0 && p[i-1] == '/' {
+			continue
+		}
+		result.WriteByte(p[i])
+	}
+	return result.String()
 }

@@ -1,17 +1,25 @@
 package naive
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"fmt"
+	"io"
 	"log/slog"
+	"math"
 	"math/rand/v2"
 	"net/http"
 	"net/netip"
+	"os"
+	"slices"
+	"sort"
 	"time"
 
 	"github.com/TecharoHQ/anubis/internal"
+	"github.com/TecharoHQ/anubis/internal/bundler"
 	"github.com/TecharoHQ/anubis/internal/honeypot"
+	"github.com/TecharoHQ/anubis/lib/config"
 	"github.com/TecharoHQ/anubis/lib/policy/checker"
 	"github.com/TecharoHQ/anubis/lib/store"
 	"github.com/a-h/templ"
@@ -36,7 +44,7 @@ var titles string
 //go:embed affirmations.txt
 var affirmations string
 
-func New(st store.Interface, lg *slog.Logger) (*Impl, error) {
+func New(cfg *config.Honeypot, st store.Interface, lg *slog.Logger) (*Impl, error) {
 	affirmation, err := spintax.Parse(affirmations)
 	if err != nil {
 		return nil, fmt.Errorf("can't parse affirmations: %w", err)
@@ -52,6 +60,74 @@ func New(st store.Interface, lg *slog.Logger) (*Impl, error) {
 		return nil, fmt.Errorf("can't parse titles: %w", err)
 	}
 
+	var fout *os.File
+	var foutBundler *bundler.Bundler[string]
+
+	if cfg.IPLogFile != "" {
+		lg.InfoContext(context.Background(), "logging honeypot IP addresses", "foutName", cfg.IPLogFile)
+
+		fout, err = os.OpenFile(cfg.IPLogFile, os.O_CREATE|os.O_RDWR, 0600)
+		if err == nil {
+			err = fout.Chmod(0600)
+			if err != nil {
+				_ = fout.Close()
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("can't open ip log file %q: %w", cfg.IPLogFile, err)
+		}
+
+		if _, err := fout.Seek(0, 0); err != nil {
+			return nil, fmt.Errorf("can't rewind ip log file %q: %w", cfg.IPLogFile, err)
+		}
+
+		if err := fout.Truncate(0); err != nil {
+			return nil, fmt.Errorf("can't truncate ip log file %q: %w", cfg.IPLogFile, err)
+		}
+
+		lg := lg.With("in", "foutBundler")
+
+		foutBundler = bundler.New(func(ctx context.Context, ips []string) {
+			st, err := fout.Stat()
+			if err != nil {
+				lg.ErrorContext(ctx, "can't stat ip log file", "foutName", cfg.IPLogFile, "err", err)
+				return
+			}
+
+			if st.Size() >= 65536 {
+				if _, err := fout.Seek(0, 0); err != nil {
+					lg.ErrorContext(ctx, "can't rewind ip log file", "foutName", cfg.IPLogFile, "err", err)
+					return
+				}
+
+				if err := fout.Truncate(0); err != nil {
+					lg.ErrorContext(ctx, "can't truncate ip log file", "foutName", cfg.IPLogFile, "err", err)
+					return
+				}
+			}
+
+			sort.Strings(ips)
+			ips = slices.Compact(ips)
+
+			buf := bytes.NewBuffer(nil)
+			for _, ip := range ips {
+				fmt.Fprintln(buf, ip)
+			}
+
+			if _, err := io.Copy(fout, buf); err != nil {
+				lg.ErrorContext(ctx, "can't write buffered IP addresses to output file", "foutName", cfg.IPLogFile, "err", err)
+				return
+			}
+
+			if err := fout.Sync(); err != nil {
+				lg.ErrorContext(ctx, "can't sync output file", "foutName", cfg.IPLogFile, "err", err)
+			}
+		})
+
+		foutBundler.BundleByteLimit = 32768
+		foutBundler.DelayThreshold = time.Minute
+	}
+
 	lg.Debug("initialized basic bullshit generator", "affirmations", affirmation.Count(), "bodies", body.Count(), "titles", title.Count())
 
 	return &Impl{
@@ -63,6 +139,8 @@ func New(st store.Interface, lg *slog.Logger) (*Impl, error) {
 		body:          body,
 		title:         title,
 		lg:            lg.With("component", "honeypot/naive"),
+		fout:          fout,
+		foutBundler:   foutBundler,
 	}, nil
 }
 
@@ -72,38 +150,33 @@ type Impl struct {
 	uaWeight      store.JSON[int]
 	networkWeight store.JSON[int]
 	lg            *slog.Logger
+	fout          *os.File
+	foutBundler   *bundler.Bundler[string]
 
 	affirmation, body, title spintax.Spintax
 }
 
-func (i *Impl) incrementUA(ctx context.Context, userAgent string) int {
-	result, _ := i.uaWeight.Get(ctx, internal.SHA256sum(userAgent))
-	result++
-	i.uaWeight.Set(ctx, internal.SHA256sum(userAgent), result, time.Hour)
-	return result
-}
-
 func (i *Impl) incrementNetwork(ctx context.Context, network string) int {
-	result, _ := i.networkWeight.Get(ctx, internal.SHA256sum(network))
+	key := internal.SHA256sum(network)
+	result, _ := i.networkWeight.Get(ctx, key)
 	result++
-	i.networkWeight.Set(ctx, internal.SHA256sum(network), result, time.Hour)
+	_ = i.networkWeight.Set(ctx, key, result, time.Hour)
 	return result
-}
-
-func (i *Impl) CheckUA() checker.Impl {
-	return checker.Func(func(r *http.Request) (bool, error) {
-		result, _ := i.uaWeight.Get(r.Context(), internal.SHA256sum(r.UserAgent()))
-		if result >= 25 {
-			return true, nil
-		}
-
-		return false, nil
-	})
 }
 
 func (i *Impl) CheckNetwork() checker.Impl {
 	return checker.Func(func(r *http.Request) (bool, error) {
-		result, _ := i.uaWeight.Get(r.Context(), internal.SHA256sum(r.UserAgent()))
+		realIP, _ := internal.RealIP(r)
+		if !realIP.IsValid() {
+			realIP, _ = netip.ParseAddr(r.Header.Get("X-Real-IP"))
+		}
+
+		network, ok := internal.ClampIP(realIP)
+		if !ok {
+			return false, nil
+		}
+
+		result, _ := i.networkWeight.Get(r.Context(), internal.SHA256sum(network.String()))
 		if result >= 25 {
 			return true, nil
 		}
@@ -120,7 +193,7 @@ func (i *Impl) makeAffirmations() []string {
 	count := rand.IntN(5) + 1
 
 	var result []string
-	for j := 0; j < count; j++ {
+	for range count {
 		result = append(result, i.affirmation.Spin())
 	}
 
@@ -131,7 +204,7 @@ func (i *Impl) makeSpins() []string {
 	count := rand.IntN(5) + 1
 
 	var result []string
-	for j := 0; j < count; j++ {
+	for range count {
 		result = append(result, i.body.Spin())
 	}
 
@@ -153,29 +226,36 @@ func (i *Impl) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	realIP, _ := internal.RealIP(r)
 	if !realIP.IsValid() {
-		realIP = netip.MustParseAddr(r.Header.Get("X-Real-Ip"))
+		realIP, _ = netip.ParseAddr(r.Header.Get("X-Real-IP"))
+	}
+
+	if i.foutBundler != nil {
+		rip := realIP.String()
+		_ = i.foutBundler.Add(rip, len(rip)+1) // for the newline
 	}
 
 	network, ok := internal.ClampIP(realIP)
 	if !ok {
-		lg.Error("clampIP failed", "output", network, "ok", ok)
+		lg.ErrorContext(r.Context(), "clampIP failed", "output", network, "ok", ok)
 		http.Error(w, "The cake is a lie", http.StatusTeapot)
 		return
 	}
 
 	networkCount := i.incrementNetwork(r.Context(), network.String())
-	uaCount := i.incrementUA(r.Context(), r.UserAgent())
 
 	stage := r.PathValue("stage")
 
 	if stage == "init" {
-		lg.Debug("found new entrance point", "id", id, "stage", stage, "userAgent", r.UserAgent(), "clampedIP", network)
+		lg.DebugContext(r.Context(), "found new entrance point", "id", id, "stage", stage, "userAgent", r.UserAgent(), "clampedIP", network)
 	} else {
-		switch {
-		case networkCount%256 == 0, uaCount%256 == 0:
-			lg.Warn("found possible crawler", "id", id, "network", network)
+		switch networkCount % 256 {
+		case 0:
+			lg.WarnContext(r.Context(), "found possible crawler", "id", id, "network", network, "userAgent", r.UserAgent())
 		}
 	}
+
+	millisecondAmount := min(math.Pow(float64(networkCount), 2), 1000)
+	time.Sleep(time.Duration(millisecondAmount) * time.Millisecond)
 
 	spins := i.makeSpins()
 	affirmations := i.makeAffirmations()

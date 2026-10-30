@@ -4,8 +4,6 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-ESBUILD_CMD=(npx --no-install esbuild)
-
 LICENSE='/*
 @licstart  The following is the entire license notice for the
 JavaScript code in this page.
@@ -47,5 +45,5 @@ for file in js/*.tsx; do
   output="${filename%.tsx}.js"  # Changes "app.jsx" to "app.js"
   echo $output
 
-  "${ESBUILD_CMD[@]}" "${file}" --minify --bundle --outfile=static/"${output}" --banner:js="${LICENSE}"
+  esbuild "${file}" --minify --bundle --target=chrome66 --outfile=static/"${output}" --banner:js="${LICENSE}"
 done

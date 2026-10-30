@@ -59,7 +59,7 @@ func reverse6(ip net.IP) string {
 		lowNibble := ipBytes[i] & 0x0F
 
 		// Append the nibbles in reversed order
-		sb.WriteString(fmt.Sprintf("%x.%x.", lowNibble, highNibble))
+		fmt.Fprintf(&sb, "%x.%x.", lowNibble, highNibble)
 	}
 
 	return sb.String()[:len(sb.String())-1]
@@ -85,11 +85,17 @@ func Lookup(ipStr string) (DroneBLResponse, error) {
 		return Unknown, err
 	}
 
+	return responseFromIPs(ips), nil
+}
+
+func responseFromIPs(ips []net.IP) DroneBLResponse {
 	if len(ips) != 0 {
 		for _, ip := range ips {
-			return DroneBLResponse(ip.To4()[3]), nil
+			if v4 := ip.To4(); v4 != nil {
+				return DroneBLResponse(v4[3])
+			}
 		}
 	}
 
-	return UnknownSpambotOrDrone, nil
+	return UnknownSpambotOrDrone
 }

@@ -59,7 +59,7 @@ func TestBasePrefixInLinks(t *testing.T) {
 
 			// Render the base template to a buffer
 			var buf strings.Builder
-			component := base(tt.name, templ.NopComponent, impressum, nil, nil, localizer)
+			component := base(tt.name, templ.NopComponent, impressum, &config.Honeypot{Enabled: true, Implementation: "naive"}, nil, nil, localizer)
 			err := component.Render(context.Background(), &buf)
 			if err != nil {
 				t.Fatalf("failed to render template: %v", err)
@@ -77,5 +77,15 @@ func TestBasePrefixInLinks(t *testing.T) {
 				t.Errorf("imprint link does not contain base prefix %q\noutput: %s", tt.wantInLink, output)
 			}
 		})
+	}
+}
+
+func TestHoneypotLinkEscapesHref(t *testing.T) {
+	var out strings.Builder
+	if err := honeypotLink(`/path" onclick="bad"><script>bad</script>`).Render(t.Context(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), `href="/path" onclick=`) || strings.Contains(out.String(), "<script>bad") {
+		t.Fatalf("unsafe output: %s", out.String())
 	}
 }

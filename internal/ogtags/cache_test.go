@@ -69,7 +69,9 @@ func TestCheckCache(t *testing.T) {
 	}
 
 	// Manually add to cache
-	cache.cache.Set(t.Context(), cacheKey, expectedTags, time.Minute)
+	if err := cache.cache.Set(t.Context(), cacheKey, expectedTags, time.Minute); err != nil {
+		t.Fatal(err)
+	}
 
 	// Test cache hit
 	tags = cache.checkCache(t.Context(), cacheKey)
@@ -94,6 +96,7 @@ func TestGetOGTags(t *testing.T) {
 			t.Fatalf("Test route loaded more than once, cache failed")
 		}
 		w.Header().Set("Content-Type", "text/html")
+		// nolint:errcheck
 		w.Write([]byte(`
 			<!DOCTYPE html>
 			<html>
@@ -170,9 +173,9 @@ func TestGetOGTags(t *testing.T) {
 		}
 	}
 
-	t.Run("ensure image is cached as allow", func(t *testing.T) {
-		if _, err := cache.cache.Underlying.Get(t.Context(), "ogtags:allow:example.com/image.jpg"); errors.Is(err, store.ErrNotFound) {
-			t.Fatal("ogtags allow caching for example.com/image.jpg did not work")
+	t.Run("metadata does not authorize assets", func(t *testing.T) {
+		if _, err := cache.cache.Underlying.Get(t.Context(), "ogtags:allow:example.com/image.jpg"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatal("metadata created an authorization cache entry")
 		}
 	})
 }
@@ -185,6 +188,7 @@ func TestGetOGTagsWithHostConsideration(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		loadCount++ // Increment counter on each request to the server
 		w.Header().Set("Content-Type", "text/html")
+		// nolint:errcheck
 		w.Write([]byte(`
 			<!DOCTYPE html>
 			<html>

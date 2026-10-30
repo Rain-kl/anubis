@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/TecharoHQ/anubis"
+	"github.com/TecharoHQ/anubis/internal"
 	"github.com/TecharoHQ/anubis/lib/policy"
 )
 
@@ -40,6 +41,8 @@ func TestSetCookie(t *testing.T) {
 			srv := spawnAnubis(t, tt.options)
 			rw := httptest.NewRecorder()
 
+			tt.cookieName = srv.cookieName(tt.cookieName)
+
 			srv.SetCookie(rw, CookieOpts{Value: "test", Host: tt.host})
 
 			resp := rw.Result()
@@ -70,8 +73,8 @@ func TestClearCookie(t *testing.T) {
 
 	ckie := cookies[0]
 
-	if ckie.Name != anubis.CookieName {
-		t.Errorf("wanted cookie named %q, got cookie named %q", anubis.CookieName, ckie.Name)
+	if want := srv.cookieName(anubis.CookieName); ckie.Name != want {
+		t.Errorf("wanted cookie named %q, got cookie named %q", want, ckie.Name)
 	}
 
 	if ckie.MaxAge != -1 {
@@ -95,8 +98,8 @@ func TestClearCookieWithDomain(t *testing.T) {
 
 	ckie := cookies[0]
 
-	if ckie.Name != anubis.CookieName {
-		t.Errorf("wanted cookie named %q, got cookie named %q", anubis.CookieName, ckie.Name)
+	if want := srv.cookieName(anubis.CookieName); ckie.Name != want {
+		t.Errorf("wanted cookie named %q, got cookie named %q", want, ckie.Name)
 	}
 
 	if ckie.MaxAge != -1 {
@@ -120,8 +123,8 @@ func TestClearCookieWithDynamicDomain(t *testing.T) {
 
 	ckie := cookies[0]
 
-	if ckie.Name != anubis.CookieName {
-		t.Errorf("wanted cookie named %q, got cookie named %q", anubis.CookieName, ckie.Name)
+	if want := srv.cookieName(anubis.CookieName); ckie.Name != want {
+		t.Errorf("wanted cookie named %q, got cookie named %q", want, ckie.Name)
 	}
 
 	if ckie.Domain != "xeiaso.net" {
@@ -189,5 +192,50 @@ func TestRenderIndexUnauthorized(t *testing.T) {
 	}
 	if body := rr.Body.String(); body != "Authorization required" {
 		t.Errorf("expected body %q, got %q", "Authorization required", body)
+	}
+}
+
+func TestNoCacheOnError(t *testing.T) {
+	pol := loadPolicies(t, "testdata/useragent.yaml", 0)
+	srv := spawnAnubis(t, Options{Policy: pol})
+	ts := httptest.NewServer(internal.RemoteXRealIP(true, "tcp", srv))
+	defer ts.Close()
+
+	for userAgent, expectedCacheControl := range map[string]string{
+		"DENY":      "no-store",
+		"CHALLENGE": "no-store",
+		"ALLOW":     "no-store",
+	} {
+		t.Run(userAgent, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodGet, ts.URL, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			req.Header.Set("User-Agent", userAgent)
+
+			resp, err := ts.Client().Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if resp.Header.Get("Cache-Control") != expectedCacheControl {
+				t.Errorf("wanted Cache-Control header %q, got %q", expectedCacheControl, resp.Header.Get("Cache-Control"))
+			}
+		})
+	}
+}
+
+func TestRejectsHostlessRedirect(t *testing.T) {
+	pol := loadPolicies(t, "testdata/useragent.yaml", 0)
+	srv := spawnAnubis(t, Options{Policy: pol, RedirectDomains: []string{"allowed.example"}})
+	req := httptest.NewRequest(http.MethodGet, "https://anubis.example/.within.website/?redir=%2f%2fevil.example%2fphish", nil)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTPNext(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected hostless redirect to be rejected, got HTTP %d body %q", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("Location"); got != "" {
+		t.Fatalf("expected no Location header on rejected redirect, got %q", got)
 	}
 }

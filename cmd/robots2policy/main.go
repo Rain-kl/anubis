@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/TecharoHQ/anubis/lib/config"
@@ -78,14 +79,18 @@ func main() {
 		if err != nil {
 			log.Fatalf("failed to fetch robots.txt from URL: %v", err)
 		}
-		defer resp.Body.Close()
+		defer resp.Body.Close() //nolint:errcheck
 		input = resp.Body
 	} else {
 		file, err := os.Open(*inputFile)
 		if err != nil {
 			log.Fatalf("failed to open input file: %v", err)
 		}
-		defer file.Close()
+		defer func() {
+			if err := file.Close(); err != nil {
+				log.Fatalf("can't close output file %s: %v", file.Name(), err)
+			}
+		}()
 		input = file
 	}
 
@@ -210,11 +215,8 @@ func parseRobotsTxt(input io.Reader) ([]RobotsRule, error) {
 
 	// Mark blacklisted user agents (those with "Disallow: /")
 	for i := range rules {
-		for _, disallow := range rules[i].Disallows {
-			if disallow == "/" {
-				rules[i].IsBlacklist = true
-				break
-			}
+		if slices.Contains(rules[i].Disallows, "/") {
+			rules[i].IsBlacklist = true
 		}
 	}
 

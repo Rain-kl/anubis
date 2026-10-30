@@ -6,7 +6,7 @@ services:
 #      - "9090:9090"
     command: ["-use-remote-address"]
     volumes:
-      - ./data/custom/botPolicies.custom.yaml:/data/cfg/botPolicies.custom.yaml:ro
+      - ./example.custom.yaml:/data/cfg/botPolicies.custom.yaml:ro
     environment:
       # Upstream app
       TARGET: "http://host.docker.internal:3923"

@@ -1,5 +1,6 @@
 {
   "supportedLanguages": [
+    "ca",
     "cs",
     "de",
     "en",
@@ -8,6 +9,7 @@
     "fi",
     "fil",
     "fr",
+    "hr",
     "is",
     "it",
     "ja",
@@ -17,12 +19,14 @@
     "nn",
     "pl",
     "pt-BR",
+    "pt-PT",
     "ru",
     "tr",
     "uk",
     "vi",
     "zh-CN",
     "zh-TW",
-    "sv"
+    "sv",
+    "bg"
   ]
 }

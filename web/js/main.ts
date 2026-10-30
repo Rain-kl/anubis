@@ -1,81 +1,64 @@
+import { waitForExtensions } from "@lib/extensions";
 import algorithms from "./algorithms";
+import { fetchWithBackoff } from "./lib/backoff";
+import { g, u, j } from "@lib/xeact.mjs";
 
-// from Xeact
-const u = (url: string = "", params: Record<string, any> = {}) => {
-  let result = new URL(url, window.location.href);
-  Object.entries(params).forEach(([k, v]) => result.searchParams.set(k, v));
-  return result.toString();
-};
+// Tell the inline bootstrap in the challenge page that this script made it off
+// the wire and started running.
 
-const j = (id: string): any | null => {
-  const elem = document.getElementById(id);
-  if (elem === null) {
-    return null;
+declare global {
+  interface Window {
+    __anubisBooted?: boolean;
   }
+}
 
-  return JSON.parse(elem.textContent);
-};
+const alreadyBooted = window.__anubisBooted === true;
+window.__anubisBooted = true;
 
-const imageURL = (mood, cacheBuster, basePrefix) =>
+const imageURL = (
+  mood: string,
+  cacheBuster: string,
+  basePrefix: string,
+): string =>
   u(`${basePrefix}/.within.website/x/cmd/anubis/static/img/${mood}.webp`, {
     cacheBuster,
   });
-
-// Detect available languages by loading the manifest
-const getAvailableLanguages = async () => {
-  const basePrefix = j("anubis_base_prefix");
-  if (basePrefix === null) {
-    return;
-  }
-
-  try {
-    const response = await fetch(
-      `${basePrefix}/.within.website/x/cmd/anubis/static/locales/manifest.json`,
-    );
-    if (response.ok) {
-      const manifest = await response.json();
-      return manifest.supportedLanguages || ["en"];
-    }
-  } catch (error) {
-    console.warn(
-      "Failed to load language manifest, falling back to default languages",
-    );
-  }
-
-  // Fallback to default languages if manifest loading fails
-  return ["en"];
-};
 
 // Use the browser language from the HTML lang attribute which is set by the server settings or request headers
 const getBrowserLanguage = async () => document.documentElement.lang;
 
 // Load translations from JSON files
-const loadTranslations = async (lang) => {
+//
+// This runs before anything else on the challenge page, so it must never throw:
+// an unhandled rejection here leaves the user staring at "Loading..." forever.
+// An untranslated challenge page still passes challenges, so the last resort is
+// an empty table, which makes t() fall through to the raw key.
+const loadTranslations = async (
+  lang: string,
+): Promise<Record<string, string>> => {
   const basePrefix = j("anubis_base_prefix");
   if (basePrefix === null) {
-    return;
+    return {};
   }
 
   try {
-    const response = await fetch(
+    const response = await fetchWithBackoff(
       `${basePrefix}/.within.website/x/cmd/anubis/static/locales/${lang}.json`,
     );
-    return await response.json();
+    return (await response.json()) as Record<string, string>;
   } catch (error) {
-    console.warn(
-      `Failed to load translations for ${lang}, falling back to English`,
-    );
+    console.warn(`Failed to load translations for ${lang}`, error);
     if (lang !== "en") {
       return await loadTranslations("en");
     }
-    throw error;
+    return {};
   }
 };
 
-const getRedirectUrl = () => {
+const getRedirectUrl = (): string | null => {
   const publicUrl = j("anubis_public_url");
   if (publicUrl === null) {
-    return;
+    return "/";
   }
   if (publicUrl && window.location.href.startsWith(publicUrl)) {
     const urlParams = new URLSearchParams(window.location.search);
@@ -84,7 +67,7 @@ const getRedirectUrl = () => {
   return window.location.href;
 };
 
-let translations = {};
+let translations: Record<string, string> = {};
 let currentLang;
 
 // Initialize translations
@@ -93,9 +76,23 @@ const initTranslations = async () => {
   translations = await loadTranslations(currentLang);
 };
 
-const t = (key) => translations[`js_${key}`] || translations[key] || key;
+const t = (key: string): string =>
+  translations[`js_${key}`] ||
+  translations[key] ||
+  `unknown translatable string: ${key}`;
+
+interface OhNoesParams {
+  titleMsg: string;
+  statusMsg: string;
+  imageSrc: string;
+}
 
 (async () => {
+  if (alreadyBooted) {
+    console.debug("anubis: main.mjs already running, ignoring duplicate load");
+    return;
+  }
+
   // Initialize translations first
   await initTranslations();
 
@@ -112,18 +109,10 @@ const t = (key) => translations[`js_${key}`] || translations[key] || key;
     },
   ];
 
-  const status: HTMLParagraphElement = document.getElementById(
-    "status",
-  ) as HTMLParagraphElement;
-  const image: HTMLImageElement = document.getElementById(
-    "image",
-  ) as HTMLImageElement;
-  const title: HTMLHeadingElement = document.getElementById(
-    "title",
-  ) as HTMLHeadingElement;
-  const progress: HTMLDivElement = document.getElementById(
-    "progress",
-  ) as HTMLDivElement;
+  const status: HTMLParagraphElement = g("status") as HTMLParagraphElement;
+  const image: HTMLImageElement = g("image") as HTMLImageElement;
+  const title: HTMLHeadingElement = g("title") as HTMLHeadingElement;
+  const progress: HTMLDivElement = g("progress") as HTMLDivElement;
 
   const anubisVersion = j("anubis_version");
   const basePrefix = j("anubis_base_prefix");
@@ -138,7 +127,7 @@ const t = (key) => translations[`js_${key}`] || translations[key] || key;
     });
   }
 
-  const ohNoes = ({ titleMsg, statusMsg, imageSrc }) => {
+  const ohNoes = ({ titleMsg, statusMsg, imageSrc }: OhNoesParams) => {
     title.innerHTML = titleMsg;
     status.innerHTML = statusMsg;
     image.src = imageSrc;
@@ -186,11 +175,11 @@ const t = (key) => translations[`js_${key}`] || translations[key] || key;
   try {
     const t0 = Date.now();
     const { hash, nonce } = await process(
-      { basePrefix, version: anubisVersion },
+      { basePrefix, version: anubisVersion, algorithm: rules.algorithm },
       challenge.randomData,
       rules.difficulty,
       null,
-      (iters) => {
+      (iters: number) => {
         const delta = Date.now() - t0;
         // only update the speed every second so it's less visually distracting
         if (delta - lastSpeedUpdate > 1000) {
@@ -205,7 +194,7 @@ const t = (key) => translations[`js_${key}`] || translations[key] || key;
 
         const probability = Math.pow(1 - likelihood, iters);
         const distance = (1 - Math.pow(probability, 2)) * 100;
-        progress["aria-valuenow"] = distance;
+        progress.ariaValueNow = `${distance}`;
         if (progress.firstElementChild !== null) {
           (progress.firstElementChild as HTMLElement).style.width =
             `${distance}%`;
@@ -222,6 +211,8 @@ const t = (key) => translations[`js_${key}`] || translations[key] || key;
     );
     const t1 = Date.now();
     console.log({ hash, nonce });
+
+    await waitForExtensions();
 
     if (userReadDetails) {
       const container: HTMLDivElement = document.getElementById(
@@ -245,14 +236,14 @@ const t = (key) => translations[`js_${key}`] || translations[key] || key;
       container.innerHTML = t("finished_reading");
 
       function onDetailsExpand() {
-        const redir = getRedirectUrl();
+        const redir = getRedirectUrl() ?? "/";
         window.location.replace(
           u(`${basePrefix}/.within.website/x/cmd/anubis/api/pass-challenge`, {
             id: challenge.id,
             response: hash,
             nonce,
             redir,
-            elapsedTime: t1 - t0,
+            elapsedTime: `${t1 - t0}`,
           }),
         );
       }
@@ -260,18 +251,18 @@ const t = (key) => translations[`js_${key}`] || translations[key] || key;
       container.onclick = onDetailsExpand;
       setTimeout(onDetailsExpand, 30000);
     } else {
-      const redir = getRedirectUrl();
+      const redir = getRedirectUrl() ?? "/";
       window.location.replace(
         u(`${basePrefix}/.within.website/x/cmd/anubis/api/pass-challenge`, {
           id: challenge.id,
           response: hash,
           nonce,
           redir,
-          elapsedTime: t1 - t0,
+          elapsedTime: `${t1 - t0}`,
         }),
       );
     }
-  } catch (err) {
+  } catch (err: any) {
     ohNoes({
       titleMsg: t("calculation_error"),
       statusMsg: `${t("calculation_error_msg")} ${err.message}`,

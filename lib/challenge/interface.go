@@ -1,6 +1,7 @@
 package challenge
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -50,15 +51,48 @@ type IssueInput struct {
 	Store     store.Interface
 }
 
+func (in *IssueInput) Valid() error {
+	if in == nil {
+		return fmt.Errorf("%w: IssueInput is nil", ErrInvalidInput)
+	}
+	if in.Rule == nil {
+		return fmt.Errorf("%w: Rule is nil", ErrInvalidInput)
+	}
+	if in.Rule.Challenge == nil {
+		return fmt.Errorf("%w: Rule.Challenge is nil", ErrInvalidInput)
+	}
+	if in.Challenge == nil {
+		return fmt.Errorf("%w: Challenge is nil", ErrInvalidInput)
+	}
+	return nil
+}
+
 type ValidateInput struct {
 	Rule      *policy.Bot
 	Challenge *Challenge
 	Store     store.Interface
 }
 
+func (in *ValidateInput) Valid() error {
+	if in == nil {
+		return fmt.Errorf("%w: ValidateInput is nil", ErrInvalidInput)
+	}
+	if in.Rule == nil {
+		return fmt.Errorf("%w: Rule is nil", ErrInvalidInput)
+	}
+	if in.Rule.Challenge == nil {
+		return fmt.Errorf("%w: Rule.Challenge is nil", ErrInvalidInput)
+	}
+	if in.Challenge == nil {
+		return fmt.Errorf("%w: Challenge is nil", ErrInvalidInput)
+	}
+	return nil
+}
+
 type Impl interface {
 	// Setup registers any additional routes with the Impl for assets or API routes.
-	Setup(mux *http.ServeMux)
+	// Any routes passed to this mux MUST include anubis.BasePrefix.
+	Setup(mux *http.ServeMux) error
 
 	// Issue a new challenge to the user, called by the Anubis.
 	Issue(w http.ResponseWriter, r *http.Request, lg *slog.Logger, in *IssueInput) (templ.Component, error)

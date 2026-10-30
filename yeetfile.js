@@ -1,31 +1,30 @@
-// NOTE(fork): yeet executes this file in goja, not Node. `require`, `fs` and
-// `process` are unavailable. The `$` helper is also only usable as a tagged
-// template literal, so each command needs its own literal.
-const versionFromFile = (() => {
-  const raw = $`cat VERSION 2>/dev/null || true`.trim();
-  if (raw) return raw;
-
-  const pkgVersion = $`node -p "require('./package.json').version" 2>/dev/null || true`.trim();
-  return pkgVersion || "";
-})();
-
-const version = (() => {
-  const tag = git.tag();
-  if (tag && tag !== "devel") return tag;
-  if (versionFromFile) return versionFromFile;
-  return tag || "devel";
-})();
-
 $`npm run assets`;
 
-["amd64", "arm64", "ppc64le", "riscv64"].forEach((goarch) => {
-  [deb, rpm, tarball].forEach((method) =>
-    method.build({
+const methods = [
+  // [goos, goarch, [build, methods]]
+  ["freebsd", "amd64", [tarball]],
+  ["freebsd", "arm64", [tarball]],
+  ["linux", "amd64", [deb, rpm, sysext, tarball]],
+  ["linux", "arm64", [deb, rpm, sysext, tarball]],
+  ["linux", "ppc64le", [deb, rpm, sysext, tarball]],
+  ["linux", "riscv64", [deb, rpm, sysext, tarball]],
+  ["netbsd", "amd64", [tarball]],
+  ["netbsd", "arm64", [tarball]],
+  ["windows", "amd64", [tarball]],
+  ["windows", "arm64", [tarball]],
+];
+
+const packages = methods.map(([goos, goarch, methods]) => {
+  return methods.map((method) => {
+    const exe = goos == "windows" ? ".exe" : "";
+
+    return method.build({
       name: "anubis",
       description:
         "Anubis weighs the souls of incoming HTTP requests and uses a sha256 proof-of-work challenge in order to protect upstream resources from scraper bots.",
       homepage: "https://anubis.techaro.lol",
       license: "MIT",
+      platform: goos,
       goarch,
 
       documentation: {
@@ -35,11 +34,26 @@ $`npm run assets`;
       },
 
       build: ({ bin, etc, systemd, doc }) => {
-        $`go build -o ${bin}/anubis -ldflags '-s -w -extldflags "-static" -X "github.com/TecharoHQ/anubis.Version=${version}"' ./cmd/anubis`;
-        $`go build -o ${bin}/anubis-robots2policy -ldflags '-s -w -extldflags "-static" -X "github.com/TecharoHQ/anubis.Version=${version}"' ./cmd/robots2policy`;
+        $`go build -trimpath -o ${bin}/anubis${exe} -ldflags '-s -w -extldflags "-static"' ./cmd/anubis`;
+        $`go build -trimpath -o ${bin}/anubis-robots2policy${exe} -ldflags '-s -w -extldflags "-static"' ./cmd/robots2policy`;
 
-        file.install("./run/anubis@.service", `${systemd}/anubis@.service`);
-        file.install("./run/default.env", `${etc}/default.env`);
+        if (goos == "linux") {
+          file.install("./run/anubis@.service", `${systemd}/anubis@.service`);
+          file.install("./run/default.env", `${etc}/default.env`);
+        }
+
+        if (goos == "linux" && method.name == "tarball") {
+          $`mkdir -p ${etc}/openrc`;
+          const openrc = `${etc}/openrc`;
+          file.install("./run/openrc/anubis.confd", `${openrc}/anubis.confd`);
+          file.install("./run/openrc/anubis.initd", `${openrc}/anubis.initd`);
+        }
+
+        if (goos == "freebsd") {
+          $`mkdir -p ${etc}/rc`;
+          const rc = `${etc}/rc`;
+          file.install("./run/anubis.freebsd", `${rc}/anubis`);
+        }
 
         $`mkdir -p ${doc}/docs`;
         $`cp -a docs/docs ${doc}`;
@@ -52,8 +66,8 @@ $`npm run assets`;
         $`cp -a data/crawlers ${doc}/data/crawlers`;
         $`cp -a data/meta ${doc}/data/meta`;
       },
-    }),
-  );
+    });
+  });
 });
 
 // NOTE(Xe): Fixes #217. This is a "half baked" tarball that includes the harder
@@ -74,7 +88,7 @@ tarball.build({
     // vendor Go dependencies
     $`cd ${out} && go mod vendor`;
     // write VERSION file
-    $`echo ${version} > ${out}/VERSION`;
+    $`echo ${git.tag()} > ${out}/VERSION`;
   },
 
   mkFilename: ({ name, version }) => `${name}-${version}`,
@@ -95,8 +109,18 @@ tarball.build({
     // build NPM-bound dependencies
     $`cd ${out} && npm ci && npm run assets && rm -rf node_modules`;
     // write VERSION file
-    $`echo ${version} > ${out}/VERSION`;
+    $`echo ${git.tag()} > ${out}/VERSION`;
   },
 
   mkFilename: ({ name, version }) => `${name}-${version}`,
 });
+
+// Build MSI installers from the Windows zips that were just built.
+packages
+  .flat()
+  .filter((pkg) => pkg.includes("windows"))
+  .filter((pkg) => pkg.endsWith(".zip"))
+  .forEach((zip) => {
+    const msiPath = zip.replace(/\.zip$/, ".msi");
+    $`go run ./internal/cmd/mkmsi --zip ${zip} --out ${msiPath}`;
+  });

@@ -5,9 +5,9 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/google/cel-go/common/types"
-	"github.com/google/cel-go/common/types/ref"
-	"github.com/google/cel-go/common/types/traits"
+	"cel.dev/cel-go/common/types"
+	"cel.dev/cel-go/common/types/ref"
+	"cel.dev/cel-go/common/types/traits"
 )
 
 // HTTPHeaders is a type wrapper to expose HTTP headers into CEL programs.
@@ -46,11 +46,11 @@ func (h HTTPHeaders) Find(key ref.Val) (ref.Val, bool) {
 		return nil, false
 	}
 
-	if _, ok := h.Header[string(k)]; !ok {
+	if _, ok := h.Header[http.CanonicalHeaderKey(string(k))]; !ok {
 		return nil, false
 	}
 
-	return types.String(strings.Join(h.Header.Values(string(k)), ",")), true
+	return types.String(strings.Join(h.Values(string(k)), ",")), true
 }
 
 func (h HTTPHeaders) Contains(key ref.Val) ref.Val {
@@ -66,7 +66,9 @@ func (h HTTPHeaders) Get(key ref.Val) ref.Val {
 	return result
 }
 
-func (h HTTPHeaders) Iterator() traits.Iterator { panic("TODO(Xe): implement me") }
+func (h HTTPHeaders) Iterator() traits.Iterator {
+	return newMapIterator(h.Header)
+}
 
 func (h HTTPHeaders) IsZeroValue() bool {
 	return len(h.Header) == 0

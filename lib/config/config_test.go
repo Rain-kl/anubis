@@ -2,12 +2,10 @@ package config_test
 
 import (
 	"errors"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/TecharoHQ/anubis/data"
 	. "github.com/TecharoHQ/anubis/lib/config"
 )
 
@@ -167,6 +165,62 @@ func TestBotValid(t *testing.T) {
 			err: nil,
 		},
 		{
+			name: "only filter by remote addresses url",
+			bot: BotConfig{
+				Name:               "openai-searchbot",
+				Action:             RuleAllow,
+				RemoteAddressesURL: p("https://openai.com/searchbot.json"),
+			},
+			err: nil,
+		},
+		{
+			name: "filter by user agent and remote addresses url",
+			bot: BotConfig{
+				Name:               "openai-searchbot",
+				Action:             RuleAllow,
+				UserAgentRegex:     p("OAI-SearchBot"),
+				RemoteAddressesURL: p("https://openai.com/searchbot.json"),
+			},
+			err: nil,
+		},
+		{
+			name: "invalid remote addresses url",
+			bot: BotConfig{
+				Name:               "openai-searchbot",
+				Action:             RuleAllow,
+				RemoteAddressesURL: p("not a url"),
+			},
+			err: ErrInvalidRemoteAddressesURL,
+		},
+		{
+			name: "remote addresses url ftp scheme",
+			bot: BotConfig{
+				Name:               "openai-searchbot",
+				Action:             RuleAllow,
+				RemoteAddressesURL: p("ftp://example.com/bots.json"),
+			},
+			err: ErrInvalidRemoteAddressesURL,
+		},
+		{
+			name: "remote addresses url empty",
+			bot: BotConfig{
+				Name:               "openai-searchbot",
+				Action:             RuleAllow,
+				RemoteAddressesURL: p(""),
+			},
+			err: ErrInvalidRemoteAddressesURL,
+		},
+		{
+			name: "remote addresses and remote addresses url",
+			bot: BotConfig{
+				Name:               "openai-searchbot",
+				Action:             RuleAllow,
+				RemoteAddr:         []string{"0.0.0.0/0"},
+				RemoteAddressesURL: p("https://openai.com/searchbot.json"),
+			},
+			err: ErrBotMustHaveRemoteAddrOrURLNotBoth,
+		},
+		{
 			name: "weight rule without weight",
 			bot: BotConfig{
 				Name:           "weight-adjust-if-mozilla",
@@ -188,7 +242,6 @@ func TestBotValid(t *testing.T) {
 	}
 
 	for _, cs := range tests {
-		cs := cs
 		t.Run(cs.name, func(t *testing.T) {
 			err := cs.bot.Valid()
 			if err == nil && cs.err == nil {
@@ -216,13 +269,12 @@ func TestConfigValidKnownGood(t *testing.T) {
 	}
 
 	for _, st := range finfos {
-		st := st
 		t.Run(st.Name(), func(t *testing.T) {
 			fin, err := os.Open(filepath.Join("testdata", "good", st.Name()))
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer fin.Close()
+			defer fin.Close() //nolint:errcheck
 
 			c, err := Load(fin, st.Name())
 			if err != nil {
@@ -240,62 +292,6 @@ func TestConfigValidKnownGood(t *testing.T) {
 	}
 }
 
-func TestImportStatement(t *testing.T) {
-	type testCase struct {
-		err        error
-		name       string
-		importPath string
-	}
-
-	var tests []testCase
-
-	for _, folderName := range []string{
-		"apps",
-		"bots",
-		"common",
-		"crawlers",
-		"meta",
-	} {
-		if err := fs.WalkDir(data.BotPolicies, folderName, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() {
-				return nil
-			}
-			if d.Name() == "README.md" {
-				return nil
-			}
-
-			tests = append(tests, testCase{
-				name:       "(data)/" + path,
-				importPath: "(data)/" + path,
-				err:        nil,
-			})
-
-			return nil
-		}); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			is := &ImportStatement{
-				Import: tt.importPath,
-			}
-
-			if err := is.Valid(); err != nil {
-				t.Errorf("validation error: %v", err)
-			}
-
-			if len(is.Bots) == 0 {
-				t.Error("wanted bot definitions, but got none")
-			}
-		})
-	}
-}
-
 func TestConfigValidBad(t *testing.T) {
 	finfos, err := os.ReadDir("testdata/bad")
 	if err != nil {
@@ -303,17 +299,16 @@ func TestConfigValidBad(t *testing.T) {
 	}
 
 	for _, st := range finfos {
-		st := st
 		t.Run(st.Name(), func(t *testing.T) {
 			fin, err := os.Open(filepath.Join("testdata", "bad", st.Name()))
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer fin.Close()
+			defer fin.Close() //nolint:errcheck
 
 			_, err = Load(fin, filepath.Join("testdata", "bad", st.Name()))
 			if err == nil {
-				t.Fatal("validation should have failed but didn't somehow")
+				t.Fatalf("validation should have failed but didn't somehow: %v", err)
 			} else {
 				t.Log(err)
 			}
@@ -355,6 +350,12 @@ func TestBotConfigZero(t *testing.T) {
 	b.RemoteAddr = []string{"::/0"}
 	if b.Zero() {
 		t.Error("config.BotConfig with remote addresses is zero value")
+	}
+
+	var d BotConfig
+	d.RemoteAddressesURL = p("https://openai.com/searchbot.json")
+	if d.Zero() {
+		t.Error("config.BotConfig with remote_addresses_url is zero value")
 	}
 
 	b.Challenge = &ChallengeRules{

@@ -4,30 +4,29 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net"
 	"net/http"
-	"os"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
 
-	"github.com/TecharoHQ/anubis/data"
 	"k8s.io/apimachinery/pkg/util/yaml"
 )
 
 var (
 	ErrNoBotRulesDefined                 = errors.New("config: must define at least one (1) bot rule")
 	ErrBotMustHaveName                   = errors.New("config.Bot: must set name")
-	ErrBotMustHaveUserAgentOrPath        = errors.New("config.Bot: must set either user_agent_regex, path_regex, headers_regex, or remote_addresses")
+	ErrBotMustHaveUserAgentOrPath        = errors.New("config.Bot: must set one of user_agent_regex, path_regex, headers_regex, remote_addresses, remote_addresses_url, expression, asns, or geoip")
 	ErrBotMustHaveUserAgentOrPathNotBoth = errors.New("config.Bot: must set either user_agent_regex, path_regex, and not both")
+	ErrBotMustHaveRemoteAddrOrURLNotBoth = errors.New("config.Bot: must set either remote_addresses or remote_addresses_url, and not both")
+	ErrInvalidRemoteAddressesURL         = errors.New("config.Bot: invalid remote_addresses_url")
 	ErrUnknownAction                     = errors.New("config.Bot: unknown action")
 	ErrInvalidUserAgentRegex             = errors.New("config.Bot: invalid user agent regex")
 	ErrInvalidPathRegex                  = errors.New("config.Bot: invalid path regex")
 	ErrInvalidHeadersRegex               = errors.New("config.Bot: invalid headers regex")
 	ErrInvalidCIDR                       = errors.New("config.Bot: invalid CIDR")
 	ErrRegexEndsWithNewline              = errors.New("config.Bot: regular expression ends with newline (try >- instead of > in yaml)")
-	ErrInvalidImportStatement            = errors.New("config.ImportStatement: invalid source file")
 	ErrCantSetBotAndImportValuesAtOnce   = errors.New("config.BotOrImport: can't set bot rules and import values at the same time")
 	ErrMustSetBotOrImportRules           = errors.New("config.BotOrImport: rule definition is invalid, you must set either bot rules or an import statement, not both")
 	ErrStatusCodeNotValid                = errors.New("config.StatusCode: status code not valid, must be between 100 and 599")
@@ -63,13 +62,14 @@ type BotConfig struct {
 	Challenge      *ChallengeRules   `json:"challenge,omitempty" yaml:"challenge,omitempty"`
 	Weight         *Weight           `json:"weight,omitempty" yaml:"weight,omitempty"`
 
-	// Thoth features
+	// IP metadata features, backed by the top-level geoip block
 	GeoIP *GeoIP `json:"geoip,omitempty"`
 	ASNs  *ASNs  `json:"asns,omitempty"`
 
-	Name       string   `json:"name" yaml:"name"`
-	Action     Rule     `json:"action" yaml:"action"`
-	RemoteAddr []string `json:"remote_addresses,omitempty" yaml:"remote_addresses,omitempty"`
+	Name               string   `json:"name" yaml:"name"`
+	Action             Rule     `json:"action" yaml:"action"`
+	RemoteAddr         []string `json:"remote_addresses,omitempty" yaml:"remote_addresses,omitempty"`
+	RemoteAddressesURL *string  `json:"remote_addresses_url,omitempty" yaml:"remote_addresses_url,omitempty"`
 }
 
 func (b BotConfig) Zero() bool {
@@ -80,6 +80,7 @@ func (b BotConfig) Zero() bool {
 		len(b.HeadersRegex) != 0,
 		b.Action != "",
 		len(b.RemoteAddr) != 0,
+		b.RemoteAddressesURL != nil,
 		b.Challenge != nil,
 		b.GeoIP != nil,
 		b.ASNs != nil,
@@ -102,6 +103,7 @@ func (b *BotConfig) Valid() error {
 	allFieldsEmpty := b.UserAgentRegex == nil &&
 		b.PathRegex == nil &&
 		len(b.RemoteAddr) == 0 &&
+		b.RemoteAddressesURL == nil &&
 		len(b.HeadersRegex) == 0 &&
 		b.ASNs == nil &&
 		b.GeoIP == nil
@@ -112,6 +114,10 @@ func (b *BotConfig) Valid() error {
 
 	if b.UserAgentRegex != nil && b.PathRegex != nil {
 		errs = append(errs, ErrBotMustHaveUserAgentOrPathNotBoth)
+	}
+
+	if len(b.RemoteAddr) > 0 && b.RemoteAddressesURL != nil {
+		errs = append(errs, ErrBotMustHaveRemoteAddrOrURLNotBoth)
 	}
 
 	if b.UserAgentRegex != nil {
@@ -158,6 +164,12 @@ func (b *BotConfig) Valid() error {
 		}
 	}
 
+	if b.RemoteAddressesURL != nil {
+		if err := validateRemoteAddressesURL(*b.RemoteAddressesURL); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
 	if b.Expression != nil {
 		if err := b.Expression.Valid(); err != nil {
 			errs = append(errs, err)
@@ -188,16 +200,29 @@ func (b *BotConfig) Valid() error {
 	return nil
 }
 
+func validateRemoteAddressesURL(raw string) error {
+	raw = strings.TrimSpace(raw)
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf("%w: %q", ErrInvalidRemoteAddressesURL, raw)
+	}
+	return nil
+}
+
 type ChallengeRules struct {
-	Algorithm  string `json:"algorithm,omitempty" yaml:"algorithm,omitempty"`
-	Difficulty int    `json:"difficulty,omitempty" yaml:"difficulty,omitempty"`
-	ReportAs   int    `json:"report_as,omitempty" yaml:"report_as,omitempty"`
+	Algorithm  string   `json:"algorithm,omitempty" yaml:"algorithm,omitempty"`
+	Difficulty int      `json:"difficulty,omitempty" yaml:"difficulty,omitempty"`
+	ReportAs   int      `json:"report_as,omitempty" yaml:"report_as,omitempty"`
+	Extensions []string `json:"extensions,omitempty" yaml:"extensions,omitempty"`
 }
 
 var (
 	ErrChallengeDifficultyTooLow  = errors.New("config.ChallengeRules: difficulty is too low (must be >= 0)")
 	ErrChallengeDifficultyTooHigh = errors.New("config.ChallengeRules: difficulty is too high (must be <= 64)")
 	ErrChallengeMustHaveAlgorithm = errors.New("config.ChallengeRules: must have algorithm name set")
+	ErrChallengeExtensionUnknown  = errors.New("config.ChallengeRules: unknown challenge extension")
+	ErrChallengeExtensionEmpty    = errors.New("config.ChallengeRules: extension name must not be empty")
+	ErrChallengeExtensionRepeated = errors.New("config.ChallengeRules: extension name was repeated")
 )
 
 func (cr ChallengeRules) Valid() error {
@@ -215,69 +240,25 @@ func (cr ChallengeRules) Valid() error {
 		errs = append(errs, fmt.Errorf("%w, got: %d", ErrChallengeDifficultyTooHigh, cr.Difficulty))
 	}
 
+	if len(cr.Extensions) != 0 {
+		seen := make(map[string]struct{}, len(cr.Extensions))
+		for _, name := range cr.Extensions {
+			_, repeated := seen[name]
+			switch {
+			case name == "":
+				errs = append(errs, ErrChallengeExtensionEmpty)
+			case repeated:
+				errs = append(errs, fmt.Errorf("%w: %q", ErrChallengeExtensionRepeated, name))
+			}
+			seen[name] = struct{}{}
+		}
+	}
+
 	if len(errs) != 0 {
 		return fmt.Errorf("config: challenge rules entry is not valid:\n%w", errors.Join(errs...))
 	}
 
 	return nil
-}
-
-type ImportStatement struct {
-	Import string `json:"import"`
-	Bots   []BotConfig
-}
-
-func (is *ImportStatement) open() (fs.File, error) {
-	if strings.HasPrefix(is.Import, "(data)/") {
-		fname := strings.TrimPrefix(is.Import, "(data)/")
-		fin, err := data.BotPolicies.Open(fname)
-		return fin, err
-	}
-
-	return os.Open(is.Import)
-}
-
-func (is *ImportStatement) load() error {
-	fin, err := is.open()
-	if err != nil {
-		return fmt.Errorf("%w: %s: %w", ErrInvalidImportStatement, is.Import, err)
-	}
-	defer fin.Close()
-
-	var imported []BotOrImport
-	var result []BotConfig
-
-	if err := yaml.NewYAMLToJSONDecoder(fin).Decode(&imported); err != nil {
-		return fmt.Errorf("can't parse %s: %w", is.Import, err)
-	}
-
-	var errs []error
-
-	for _, b := range imported {
-		if err := b.Valid(); err != nil {
-			errs = append(errs, err)
-		}
-
-		if b.ImportStatement != nil {
-			result = append(result, b.ImportStatement.Bots...)
-		}
-
-		if b.BotConfig != nil {
-			result = append(result, *b.BotConfig)
-		}
-	}
-
-	if len(errs) != 0 {
-		return fmt.Errorf("config %s is not valid:\n%w", is.Import, errors.Join(errs...))
-	}
-
-	is.Bots = result
-
-	return nil
-}
-
-func (is *ImportStatement) Valid() error {
-	return is.load()
 }
 
 type BotOrImport struct {
@@ -325,7 +306,7 @@ func (sc StatusCodes) Valid() error {
 }
 
 type fileConfig struct {
-	OpenGraph   openGraphFileConfig `json:"openGraph,omitempty"`
+	OpenGraph   openGraphFileConfig `json:"openGraph"`
 	Impressum   *Impressum          `json:"impressum,omitempty"`
 	Store       *Store              `json:"store"`
 	Bots        []BotOrImport       `json:"bots"`
@@ -334,6 +315,9 @@ type fileConfig struct {
 	DNSBL       bool                `json:"dnsbl"`
 	DNSTTL      DnsTTL              `json:"dns_ttl"`
 	Logging     *Logging            `json:"logging"`
+	Metrics     *Metrics            `json:"metrics,omitempty"`
+	Honeypot    *Honeypot           `json:"honeypot"`
+	GeoIP       *GeoIPDatabases     `json:"geoip,omitempty"`
 }
 
 func (c *fileConfig) Valid() error {
@@ -375,6 +359,24 @@ func (c *fileConfig) Valid() error {
 		}
 	}
 
+	if c.Metrics != nil {
+		if err := c.Metrics.Valid(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if c.Honeypot != nil {
+		if err := c.Honeypot.Valid(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if c.GeoIP != nil {
+		if err := c.GeoIP.Valid(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
 	if len(errs) != 0 {
 		return fmt.Errorf("config is not valid:\n%w", errors.Join(errs...))
 	}
@@ -395,7 +397,8 @@ func Load(fin io.Reader, fname string) (*Config, error) {
 		Store: &Store{
 			Backend: "memory",
 		},
-		Logging: (Logging{}).Default(),
+		Logging:  (Logging{}).Default(),
+		Honeypot: new((Honeypot{}).Default()),
 	}
 
 	if err := yaml.NewYAMLToJSONDecoder(fin).Decode(&c); err != nil {
@@ -417,6 +420,9 @@ func Load(fin io.Reader, fname string) (*Config, error) {
 		StatusCodes: c.StatusCodes,
 		Store:       c.Store,
 		Logging:     c.Logging,
+		Metrics:     c.Metrics,
+		Honeypot:    c.Honeypot,
+		GeoIP:       c.GeoIP,
 	}
 
 	if c.OpenGraph.TimeToLive != "" {
@@ -434,7 +440,7 @@ func Load(fin io.Reader, fname string) (*Config, error) {
 				continue
 			}
 
-			result.Bots = append(result.Bots, boi.ImportStatement.Bots...)
+			result.Bots = append(result.Bots, boi.Bots...)
 		}
 
 		if boi.BotConfig != nil {
@@ -508,6 +514,9 @@ type Config struct {
 	Logging     *Logging
 	DNSBL       bool
 	DNSTTL      DnsTTL
+	Metrics     *Metrics
+	Honeypot    *Honeypot
+	GeoIP       *GeoIPDatabases
 }
 
 func (c Config) Valid() error {

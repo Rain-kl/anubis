@@ -511,7 +511,7 @@ func (h *Hooks) renderPasswordPage(w http.ResponseWriter, r *http.Request, local
 func (h *Hooks) renderBlockedPage(w http.ResponseWriter, r *http.Request, localizer *localization.SimpleLocalizer) {
 	msg := "Too many attempts, please try again later"
 	templ.Handler(
-		web.Base(localizer.T("oh_noes"), web.ErrorPage(msg, "", "", localizer), nil, localizer),
+		web.Base(localizer.T("oh_noes"), web.ErrorPage(msg, "", "", localizer), nil, nil, localizer),
 		templ.WithStatus(http.StatusTooManyRequests),
 	).ServeHTTP(w, r)
 }

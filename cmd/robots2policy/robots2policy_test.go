@@ -96,7 +96,11 @@ func TestDataFileConversion(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to open robots file %s: %v", robotsPath, err)
 			}
-			defer robotsFile.Close()
+			defer func() {
+				if err := robotsFile.Close(); err != nil {
+					t.Fatalf("can't close output file: %v", err)
+				}
+			}()
 
 			// Parse robots.txt
 			rules, err := parseRobotsTxt(robotsFile)
@@ -158,8 +162,8 @@ func TestDataFileConversion(t *testing.T) {
 			}
 
 			if strings.ToLower(*outputFormat) == "yaml" {
-				var actualData []interface{}
-				var expectedData []interface{}
+				var actualData []any
+				var expectedData []any
 
 				err = yaml.Unmarshal(actualOutput, &actualData)
 				if err != nil {
@@ -178,8 +182,8 @@ func TestDataFileConversion(t *testing.T) {
 					t.Errorf("Output mismatch for %s\nExpected:\n%s\n\nActual:\n%s", tc.name, expectedStr, actualStr)
 				}
 			} else {
-				var actualData []interface{}
-				var expectedData []interface{}
+				var actualData []any
+				var expectedData []any
 
 				err = json.Unmarshal(actualOutput, &actualData)
 				if err != nil {
@@ -419,6 +423,6 @@ Disallow: /`
 
 // compareData performs a deep comparison of two data structures,
 // ignoring differences that are semantically equivalent in YAML/JSON
-func compareData(actual, expected interface{}) bool {
+func compareData(actual, expected any) bool {
 	return reflect.DeepEqual(actual, expected)
 }

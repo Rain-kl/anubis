@@ -3,21 +3,23 @@ package policy
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 
+	"cel.dev/cel-go/cel"
+	"cel.dev/cel-go/common/types"
 	"github.com/TecharoHQ/anubis/internal"
 	"github.com/TecharoHQ/anubis/internal/dns"
 	"github.com/TecharoHQ/anubis/lib/config"
 	"github.com/TecharoHQ/anubis/lib/policy/expressions"
-	"github.com/google/cel-go/cel"
-	"github.com/google/cel-go/common/types"
 )
 
 type CELChecker struct {
-	program cel.Program
-	src     string
+	program        cel.Program
+	src            string
+	subRequestMode bool
 }
 
-func NewCELChecker(cfg *config.ExpressionOrList, dnsObj *dns.Dns) (*CELChecker, error) {
+func NewCELChecker(cfg *config.ExpressionOrList, dnsObj *dns.Dns, subRequestMode bool) (*CELChecker, error) {
 	env, err := expressions.BotEnvironment(dnsObj)
 	if err != nil {
 		return nil, err
@@ -29,8 +31,9 @@ func NewCELChecker(cfg *config.ExpressionOrList, dnsObj *dns.Dns) (*CELChecker, 
 	}
 
 	return &CELChecker{
-		src:     cfg.String(),
-		program: program,
+		src:            cfg.String(),
+		program:        program,
+		subRequestMode: subRequestMode,
 	}, nil
 }
 
@@ -39,7 +42,7 @@ func (cc *CELChecker) Hash() string {
 }
 
 func (cc *CELChecker) Check(r *http.Request) (bool, error) {
-	result, _, err := cc.program.ContextEval(r.Context(), &CELRequest{r})
+	result, _, err := cc.program.ContextEval(r.Context(), &CELRequest{r, cc.subRequestMode})
 
 	if err != nil {
 		return false, err
@@ -54,6 +57,7 @@ func (cc *CELChecker) Check(r *http.Request) (bool, error) {
 
 type CELRequest struct {
 	*http.Request
+	subRequestMode bool
 }
 
 func (cr *CELRequest) Parent() cel.Activation { return nil }
@@ -61,7 +65,7 @@ func (cr *CELRequest) Parent() cel.Activation { return nil }
 func (cr *CELRequest) ResolveName(name string) (any, bool) {
 	switch name {
 	case "remoteAddress":
-		return cr.Header.Get("X-Real-Ip"), true
+		return cr.Header.Get("X-Real-IP"), true
 	case "contentLength":
 		return cr.ContentLength, true
 	case "host":
@@ -71,7 +75,20 @@ func (cr *CELRequest) ResolveName(name string) (any, bool) {
 	case "userAgent":
 		return cr.UserAgent(), true
 	case "path":
-		return cr.URL.Path, true
+		if cr.subRequestMode {
+			original := cr.Header.Get("X-Original-Uri")
+			if original == "" {
+				original = cr.Header.Get("X-Forwarded-Uri")
+			}
+			if original != "" {
+				u, err := url.ParseRequestURI(original)
+				if err != nil {
+					return nil, false
+				}
+				return pathForPolicy(u.Path), true
+			}
+		}
+		return pathForPolicy(cr.URL.Path), true
 	case "query":
 		return expressions.URLValues{Values: cr.URL.Query()}, true
 	case "headers":
@@ -83,6 +100,6 @@ func (cr *CELRequest) ResolveName(name string) (any, bool) {
 	case "load_15m":
 		return expressions.Load15(), true
 	default:
-		return nil, false
+		return expressions.ResolveBotVariable(name, cr.Request)
 	}
 }

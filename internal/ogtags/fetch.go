@@ -40,6 +40,10 @@ func (c *OGTagCache) fetchHTMLDocumentWithCache(ctx context.Context, urlStr stri
 
 	// Add proxy headers
 	req.Header.Set("X-Forwarded-Proto", "https")
+	// Forward Host header as X-Forwarded-Host for webapps to dispatch against
+	if originalHost != "" {
+		req.Header.Set("X-Forwarded-Host", originalHost)
+	}
 	req.Header.Set("User-Agent", "Anubis-OGTag-Fetcher/1.0") // For tracking purposes
 
 	serverName := hostForRequest
@@ -53,8 +57,9 @@ func (c *OGTagCache) fetchHTMLDocumentWithCache(ctx context.Context, urlStr stri
 	if err != nil {
 		var netErr net.Error
 		if errors.As(err, &netErr) && netErr.Timeout() {
-			slog.Debug("og: request timed out", "url", urlStr)
-			c.cache.Set(ctx, cacheKey, emptyMap, c.ogTimeToLive/2) // Cache empty result for half the TTL to not spam the server
+			slog.DebugContext(ctx, "og: request timed out", "url", urlStr)
+			// Cache empty result for half the TTL to not spam the server, errors don't matter
+			_ = c.cache.Set(ctx, cacheKey, emptyMap, c.ogTimeToLive/2)
 		}
 		return nil, fmt.Errorf("http get failed: %w", err)
 	}
@@ -63,13 +68,14 @@ func (c *OGTagCache) fetchHTMLDocumentWithCache(ctx context.Context, urlStr stri
 	defer func(Body io.ReadCloser) {
 		err := Body.Close()
 		if err != nil {
-			slog.Debug("og: error closing response body", "url", urlStr, "error", err)
+			slog.DebugContext(ctx, "og: error closing response body", "url", urlStr, "error", err)
 		}
 	}(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		slog.Debug("og: received non-OK status code", "url", urlStr, "status", resp.StatusCode)
-		c.cache.Set(ctx, cacheKey, emptyMap, c.ogTimeToLive) // Cache empty result for non-successful status codes
+		slog.DebugContext(ctx, "og: received non-OK status code", "url", urlStr, "status", resp.StatusCode)
+		// Cache empty result for non-successful status codes
+		_ = c.cache.Set(ctx, cacheKey, emptyMap, c.ogTimeToLive)
 		return nil, fmt.Errorf("%w: page not found", ErrOgHandled)
 	}
 
@@ -80,12 +86,12 @@ func (c *OGTagCache) fetchHTMLDocumentWithCache(ctx context.Context, urlStr stri
 	} else {
 		mediaType, _, err := mime.ParseMediaType(ct)
 		if err != nil {
-			slog.Debug("og: malformed Content-Type header", "url", urlStr, "contentType", ct)
+			slog.DebugContext(ctx, "og: malformed Content-Type header", "url", urlStr, "contentType", ct)
 			return nil, fmt.Errorf("%w malformed Content-Type header: %w", ErrOgHandled, err)
 		}
 
 		if mediaType != "text/html" && mediaType != "application/xhtml+xml" {
-			slog.Debug("og: unsupported Content-Type", "url", urlStr, "contentType", mediaType)
+			slog.DebugContext(ctx, "og: unsupported Content-Type", "url", urlStr, "contentType", mediaType)
 			return nil, fmt.Errorf("%w unsupported Content-Type: %s", ErrOgHandled, mediaType)
 		}
 	}
@@ -97,11 +103,22 @@ func (c *OGTagCache) fetchHTMLDocumentWithCache(ctx context.Context, urlStr stri
 		// Check if the error is specifically because the limit was exceeded
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
-			slog.Debug("og: content exceeded max length", "url", urlStr, "limit", maxContentLength)
+			slog.DebugContext(ctx, "og: content exceeded max length", "url", urlStr, "limit", maxContentLength)
 			return nil, fmt.Errorf("content too large: exceeded %d bytes", maxContentLength)
 		}
 		return nil, fmt.Errorf("failed to parse HTML: %w", err)
 	}
 
 	return doc, nil
+}
+
+func sameOriginRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 || len(via) == 0 {
+		return ErrOgHandled
+	}
+	origin := via[0].URL
+	if req.URL.Scheme != origin.Scheme || req.URL.Host != origin.Host {
+		return ErrOgHandled
+	}
+	return nil
 }

@@ -17,6 +17,22 @@ In this limited preview state, Anubis generates pages using [spintax](https://ou
 
 This should be fairly transparent to humans that this is pseudoprofound anti-content and is a signal to click away.
 
+## fail2ban implications
+
+This works by adding an entry point to the honeypot maze in every page like this:
+
+```html
+<script type="ignore">
+  <a
+    href="/.within.website/x/cmd/anubis/api/honeypot/<uuid>/init"
+  >
+    Don't click me
+  </a>
+</script>
+```
+
+Any hits that match the URL `^/.within.website/x/cmd/anubis/api/honeypot/.*` are _malicious_ and should be blocked. A spec-compliant HTML parser will not parse this link, so any parser that does and visits it is categorically in the wrong.
+
 ## Plans
 
 Future versions of this feature will allow for more customization. In the near future this will be configurable via the following mechanisms:
@@ -37,4 +53,25 @@ Right now Anubis assigns 30 weight points if the following criteria are met:
 - A client's User-Agent has been observed in the dataset poisoning maze at least 25 times.
 - The network-clamped IP address (/24 for IPv4 and /48 for IPv6) has been observed in the dataset poisoning maze at least 25 times.
 
-Additionally, when any given client by both User-Agent and network-clamped IP address has been observed, Anubis will emit log lines warning about it so that administrative action can be taken up to and including [filing abuse reports with the network owner](/blog/2025/file-abuse-reports).
+When any given client by both User-Agent and network-clamped IP address has been observed, Anubis will emit log lines warning about it so that administrative action can be taken up to and including [filing abuse reports with the network owner](/blog/2025/file-abuse-reports).
+
+### IP address logging
+
+Anubis' honeypot feature can log IP addresses to a file. These logs let you configure fail2ban pipelines or integrate with other software to block bot traffic (eg: Panorama).
+
+To use this feature:
+
+- Anubis must have access to storage it can write to.
+- The backing filesystem must support writes, seeking, and truncation.
+- The Anubis user must have write permissions to the log file.
+
+Configure this log file in the `honeypot` section of your [policy file](../policies.mdx):
+
+```yaml
+honeypot:
+  enabled: true
+  implementation: naive
+  ip_log_file: /data/anubis/honeypot.addrs
+```
+
+Anubis collects the IP addresses that hit the honeypot feature continuously and buffers them into memory. Anubis writes collected IP addresses every minute or when Anubis collects 32 kilobytes of addresses, whichever happens first. Once the file gets bigger than 64 kilobytes, the file is reset to avoid infinite growth.

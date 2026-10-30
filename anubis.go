@@ -1,12 +1,27 @@
 // Package anubis contains the version number of Anubis.
 package anubis
 
-import "time"
+import (
+	"runtime/debug"
+	"time"
+)
+
+func init() {
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return
+	}
+
+	// XXX(Xe): many things in this repo assume that the development version
+	// of anubis is `devel` and ReadBuildInfo returns `(devel)`. Shim the gap.
+	if bi.Main.Version != "(devel)" {
+		Version = bi.Main.Version
+	}
+}
 
 // Version is the current version of Anubis.
 //
-// This variable is set at build time using the -X linker flag. If not set,
-// it defaults to "devel".
+// This is set from the Go module runtime version.
 var Version = "devel"
 
 // CookieName is the name of the cookie that Anubis uses in order to validate
@@ -16,6 +31,14 @@ var CookieName = "techaro.lol-anubis"
 // TestCookieName is the name of the cookie that Anubis uses in order to check
 // if cookies are enabled on the client's browser.
 var TestCookieName = "techaro.lol-anubis-cookie-verification"
+
+// OriginalRefererCookieName carries the Referer header seen on the request that
+// triggered a challenge across the redirect back to the original URL. Browsers
+// don't send it on that follow-up navigation since it's a same-site redirect, so
+// without this relay upstream analytics see the challenge page as the referer
+// instead of the site the visitor actually came from. See
+// https://github.com/TecharoHQ/anubis/issues/1596
+var OriginalRefererCookieName = "techaro.lol-anubis-original-referer"
 
 // CookieDefaultExpirationTime is the amount of time before the cookie/JWT expires.
 const CookieDefaultExpirationTime = 7 * 24 * time.Hour
@@ -39,6 +62,3 @@ const DefaultDifficulty = 4
 // ForcedLanguage is the language being used instead of the one of the request's Accept-Language header
 // if being set.
 var ForcedLanguage = ""
-
-// UseSimplifiedExplanation can be set to true for using the simplified explanation
-var UseSimplifiedExplanation = false

@@ -59,7 +59,7 @@
 ### 1) 默认会加载什么
 
 - 未设置 `POLICY_FNAME` 时，Anubis 会加载内置策略 `(data)/botPolicies.yaml`。
-- 默认不会自动加载 `data/custom/*`。
+- 默认不会自动加载 `example.custom.yaml` 之类的示例策略。
 - 默认也不会自动加载 `(data)/apps` 或 `(data)/meta` 整个目录，只会加载 `botPolicies.yaml` 中明确写了 `import` 的文件。
 
 ### 2) 设置 `POLICY_FNAME` 后会怎样
@@ -82,7 +82,7 @@
 
 ### 1) 最小流程
 
-1. 新建策略文件，例如 `data/custom/botPolicies.custom.yaml`。
+1. 复制仓库根目录的 `example.custom.yaml` 作为起点，例如放到 `config/botPolicies.custom.yaml`。
 2. 在 `bots:` 下按顺序写规则（顺序非常重要）。
 3. 需要保留默认行为时，在文件里显式 `import` 默认规则。
 4. 在 `docker-compose.yml` 中挂载该文件，并设置 `POLICY_FNAME`。
@@ -157,7 +157,7 @@ services:
   anubis:
     image: ghcr.io/rain-kl/anubis:latest
     volumes:
-      - ./data/custom/botPolicies.custom.yaml:/data/cfg/botPolicies.custom.yaml:ro
+      - ./config/botPolicies.custom.yaml:/data/cfg/botPolicies.custom.yaml:ro
     environment:
       POLICY_FNAME: "/data/cfg/botPolicies.custom.yaml"
       DEFAULT_FALLBACK_ACTION: "CHALLENGE"
