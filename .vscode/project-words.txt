@@ -3,6 +3,8 @@ acs
 Actorified
 actorifiedstore
 actorify
+addgroup
+adduser
 admins
 agentic
 Aibrew
@@ -71,8 +73,10 @@ cachediptoasn
 Caddyfile
 caninetools
 canonialheader
+canonicalheader
 Cardyb
 CAs
+cdylib
 celchecker
 celphase
 cerr
@@ -95,6 +99,7 @@ clampip
 CLAUDE
 cloudflare
 cloudsolutions
+codegen
 Codespaces
 commoncrawl
 confd
@@ -113,12 +118,15 @@ cssload
 CSSURL
 Ctarget
 CUDA
+cust
 dacl
 daemonizing
 databento
 DATADIR
 datapkg
 dayjob
+DBUILD
+DCMAKE
 dco
 DDOS
 ddwrt
@@ -128,11 +136,13 @@ Debian
 debrpm
 decaymap
 deflang
+DENABLE
 denan
 deprioritized
 devcontainers
 Diffbot
 Dillo
+DINSTALL
 discordapp
 discordbot
 distros
@@ -150,6 +160,7 @@ droneblresponse
 dropin
 dsilence
 duckduckbot
+DWASI
 echaro
 eerror
 ellenjoe
@@ -157,6 +168,7 @@ emacs
 embe
 enbyware
 envoyproxy
+equix
 eral
 ETCDIR
 etld
@@ -164,6 +176,8 @@ everyones
 evilbot
 evilsite
 exdtir
+existience
+exnref
 expressionorlist
 extdir
 externalagent
@@ -178,6 +192,7 @@ fcrdns
 fcvg
 fediverse
 felsqualle
+ffile
 ffprobe
 FFXIV
 fhdr
@@ -202,6 +217,7 @@ fsys
 fucky
 fullchain
 fvbommel
+fwasm
 gaissmai
 Galvus
 gclid
@@ -259,6 +275,7 @@ Hext
 hmc
 homelab
 hostable
+hostimport
 HSTS
 htmlc
 htmx
@@ -308,6 +325,7 @@ Keyfunc
 keypair
 keypairreloader
 KHTML
+kilohashes
 kinda
 Kitesurf
 kpr
@@ -333,6 +351,7 @@ Lockdown
 logfile
 lol
 lominsa
+lunwind
 Lupis
 Lyrenth
 MAINT
@@ -350,6 +369,7 @@ Minfilia
 minica
 mistralai
 mkmsi
+mllvm
 mmaps
 mmdb
 mmdbtype
@@ -380,6 +400,8 @@ myclient
 mymaster
 mypass
 myuser
+Nanosleep
+Nanotime
 NArg
 nbf
 Necron
@@ -390,9 +412,11 @@ nginx
 nicksnyder
 nikandfor
 nobots
+noeh
 NOFILE
 nolint
 NONINFRINGEMENT
+nonmatching
 nontrapping
 nosleep
 nullglob
@@ -443,6 +467,7 @@ promauto
 promhttp
 proofofwork
 pseudoprofound
+pthread
 publicsuffix
 purejs
 pwcmd
@@ -454,6 +479,7 @@ qwertiko
 rac
 rawler
 rcvar
+recompiles
 redhat
 redir
 redirectscheme
@@ -482,6 +508,7 @@ Samsung
 sarif
 sas
 sasl
+scrapy
 screenshots
 searchbot
 searx
@@ -496,6 +523,7 @@ servicesid
 setarch
 setsebool
 setuplistener
+shasums
 shellcheck
 shellenv
 shirou
@@ -523,6 +551,7 @@ srcip
 srcs
 srv
 ssh
+Stackify
 stackoverflow
 Stargate
 startprecmd
@@ -580,6 +609,7 @@ unbreakdocker
 Uncacheable
 unfeatures
 unifiedjs
+uninlined
 unintrusive
 unipromos
 unixhttpd
@@ -614,6 +644,7 @@ vnd
 VPS
 Vultr
 WAIFU
+Walltime
 Warde
 wasmtime
 wazero
@@ -626,6 +657,7 @@ websecure
 websites
 Webzio
 wenet
+WERROR
 whois
 wildbase
 Wilfsunnwyn
@@ -637,6 +669,7 @@ wordpress
 workaround
 workarounds
 workdir
+worktrees
 wpbot
 xai
 XCircle
