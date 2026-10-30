@@ -1,22 +1,12 @@
-const fs = require("fs");
-const path = require("path");
-
+// NOTE(fork): yeet executes this file in goja, not Node. `require`, `fs` and
+// `process` are unavailable. The `$` helper is also only usable as a tagged
+// template literal, so each command needs its own literal.
 const versionFromFile = (() => {
-  try {
-    const raw = fs
-      .readFileSync(path.join(process.cwd(), "VERSION"), "utf8")
-      .trim();
-    if (raw) return raw;
-  } catch {}
-  try {
-    const pkg = JSON.parse(
-      fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8"),
-    );
-    if (pkg && typeof pkg.version === "string" && pkg.version.trim()) {
-      return pkg.version.trim();
-    }
-  } catch {}
-  return "";
+  const raw = $`cat VERSION 2>/dev/null || true`.trim();
+  if (raw) return raw;
+
+  const pkgVersion = $`node -p "require('./package.json').version" 2>/dev/null || true`.trim();
+  return pkgVersion || "";
 })();
 
 const version = (() => {

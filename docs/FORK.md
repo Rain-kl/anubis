@@ -195,7 +195,7 @@ flowchart TD
 ### A. 默认 bots 规则（按执行顺序）
 
 | 顺序 | 规则名                                             | 判断条件（摘要）                                                                  | 动作        |
-| ---- | -------------------------------------------------- | --------------------------------------------------------------------------------- | ----------- | --- | --- | ---- | ------ | ------- |
+| ---- | -------------------------------------------------- | --------------------------------------------------------------------------------- | ----------- |
 | 1    | `cloudflare-workers`                               | 请求头存在 `CF-Worker`                                                            | `WEIGH +15` |
 | 2    | `lightpanda`                                       | `User-Agent` 匹配 `^LightPanda/.*$`                                               | `DENY`      |
 | 3    | `headless-chrome`                                  | `User-Agent` 包含 `HeadlessChrome`                                                | `DENY`      |
@@ -222,7 +222,7 @@ flowchart TD
 | 24   | `yandexbot`                                        | `User-Agent` 命中 Yandex 标识且 `verifyFCrDNS(remoteAddress)` 反向校验通过        | `ALLOW`     |
 | 25   | `x-firefox-ai`                                     | 存在请求头 `X-Firefox-Ai`                                                         | `WEIGH +5`  |
 | 26   | `well-known`                                       | 路径匹配 `^/\\.well-known/.*$`                                                    | `ALLOW`     |
-| 27   | `favicon`                                          | 路径匹配 `^/favicon\\.(?:ico                                                      | png         | gif | jpg | jpeg | svg)$` | `ALLOW` |
+| 27   | `favicon`                                          | 路径匹配 `^/favicon\.(?:ico\|png\|gif\|jpg\|jpeg\|svg)$`                            | `ALLOW`     |
 | 28   | `robots-txt`                                       | 路径匹配 `^/robots\\.txt$`                                                        | `ALLOW`     |
 | 29   | `sitemap`                                          | 路径匹配 `^/sitemap\\.xml$`                                                       | `ALLOW`     |
 | 30   | `countries-with-aggressive-scrapers`               | `geoip` 国家为 `BR` 或 `CN`（需 Thoth）                                           | `WEIGH +10` |
