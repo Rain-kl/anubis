@@ -56,6 +56,7 @@ var (
 	authMode                 = flag.String("auth-mode", "pow", "authentication mode: pow or password")
 	validMode                = flag.String("valid-mode", "jwt", "validation mode: jwt or whitelist")
 	passwordAuth             = flag.String("password", "", "password used for password auth mode")
+	passwordHint             = flag.String("password-hint", "", "optional public hint or question shown above the password input")
 	passwordMaxFails         = flag.Int("password-max-fails", 5, "max failed password attempts before temporary block")
 	passwordBanTime          = flag.Int("password-ban-time", 60, "password block duration in seconds")
 	whitelistTimeout         = flag.Int("whitelist-timeout", 3600, "whitelist timeout in seconds")
@@ -451,6 +452,7 @@ func run(ctx context.Context) {
 		AuthMode:             *authMode,
 		ValidMode:            *validMode,
 		Password:             *passwordAuth,
+		PasswordHint:         passwordHint,
 		WhitelistTTL:         time.Duration(*whitelistTimeout) * time.Second,
 		WhitelistSliding:     true,
 		PasswordMaxFails:     *passwordMaxFails,

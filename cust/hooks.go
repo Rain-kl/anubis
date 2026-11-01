@@ -505,7 +505,11 @@ func (h *Hooks) renderPasswordPage(w http.ResponseWriter, r *http.Request, local
 	}
 	imageURL := basePrefix + anubis.StaticPath + "static/img/" + imageName
 
-	writePasswordPage(w, localizer, stylesheet, imageURL, passwordAction, redir, errMsg)
+	var hint string
+	if h.cfg.PasswordHint != nil {
+		hint = *h.cfg.PasswordHint
+	}
+	writePasswordPage(w, localizer, stylesheet, imageURL, passwordAction, redir, hint, errMsg)
 }
 
 func (h *Hooks) renderBlockedPage(w http.ResponseWriter, r *http.Request, localizer *localization.SimpleLocalizer) {

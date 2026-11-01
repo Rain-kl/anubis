@@ -19,6 +19,7 @@ type Config struct {
 	AuthMode             string
 	ValidMode            string
 	Password             string
+	PasswordHint         *string `json:"password_hint,omitempty" yaml:"password_hint,omitempty"`
 	WhitelistTTL         time.Duration
 	WhitelistSliding     bool
 	PasswordMaxFails     int

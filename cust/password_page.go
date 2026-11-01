@@ -8,7 +8,7 @@ import (
 	"github.com/TecharoHQ/anubis/lib/localization"
 )
 
-func writePasswordPage(w io.Writer, localizer *localization.SimpleLocalizer, stylesheet, imageURL, action, redir, errMsg string) {
+func writePasswordPage(w io.Writer, localizer *localization.SimpleLocalizer, stylesheet, imageURL, action, redir, hint, errMsg string) {
 	title := localizer.T("authorization_required")
 	lang := localizer.GetLang()
 
@@ -43,6 +43,7 @@ func writePasswordPage(w io.Writer, localizer *localization.SimpleLocalizer, sty
 	b.WriteString("form{display:flex;flex-direction:column;gap:.75rem;}")
 	b.WriteString("input[type=password]{padding:.6rem;border:1px solid #ccc;border-radius:.4rem;}")
 	b.WriteString("button{padding:.6rem;border:0;border-radius:.4rem;background:#b16286;color:#fff;font-weight:600;cursor:pointer;}")
+	b.WriteString(".password-hint{white-space:pre-wrap;overflow-wrap:anywhere;text-align:left;}")
 	b.WriteString(".error{color:#b00020;margin:0.5rem 0 0;}")
 	b.WriteString("</style>")
 	b.WriteString("</head>")
@@ -61,7 +62,12 @@ func writePasswordPage(w io.Writer, localizer *localization.SimpleLocalizer, sty
 	b.WriteString("<form method=\"POST\" action=\"")
 	b.WriteString(escapedAction)
 	b.WriteString("\">")
-	b.WriteString("<input type=\"password\" name=\"password\" autocomplete=\"current-password\" placeholder=\"Password\" required>")
+	if hint != "" {
+		b.WriteString("<label class=\"password-hint\" for=\"password\">")
+		b.WriteString(html.EscapeString(hint))
+		b.WriteString("</label>")
+	}
+	b.WriteString("<input id=\"password\" type=\"password\" name=\"password\" autocomplete=\"current-password\" placeholder=\"Password\" required>")
 	b.WriteString("<input type=\"hidden\" name=\"redir\" value=\"")
 	b.WriteString(escapedRedir)
 	b.WriteString("\">")
